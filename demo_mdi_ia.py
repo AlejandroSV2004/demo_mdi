@@ -10,7 +10,7 @@ import time
 import pygame
 import json
 from vosk import Model, KaldiRecognizer
-import wave
+import random
 
 # Cargar variables de entorno
 load_dotenv()
@@ -23,133 +23,347 @@ if not api_key_google or not api_key_eleven:
     print("Error: Faltan las claves en el archivo .env")
     exit()
 
+# 1. Configurar Gemini
 genai.configure(api_key=api_key_google)
+
+# 2. Configurar ElevenLabs
 client_eleven = ElevenLabs(api_key=api_key_eleven)
 
-# Inicializar el sistema de audio de pygame para reproducir MP3
-pygame.mixer.init()
-
-# Cargar modelo VOSK
-print("Cargando modelo VOSK...")
+# 3. Configurar VOSK
+print("Cargando modelo de voz local (Vosk)...")
+if not os.path.exists("model"):
+    print("ERROR: No encuentro la carpeta 'model'.")
+    print("Descarga 'vosk-model-small-es-0.42', descomprimelo y renombra la carpeta a 'model'.")
+    exit()
+    
 try:
-    vosk_model = Model("model")  # La carpeta 'model' debe estar en el mismo directorio
-    print("Modelo VOSK cargado correctamente")
+    vosk_model = Model("model")
+    rec_vosk = KaldiRecognizer(vosk_model, 44100)
 except Exception as e:
-    print(f"Error al cargar el modelo VOSK: {e}")
-    print("Asegúrate de que la carpeta 'model' existe y contiene el modelo vosk_small_es_042")
+    print(f"Error cargando Vosk: {e}")
     exit()
 
-# Configuracion del modelo Gemini
-prompt_sistema = """
-Eres Jarvis, un asistente personal de inteligencia artificial al estilo de Iron Man.
-Responde de manera concisa, elegante y con un toque de humor sutil.
-No uses emojis. Maximo 2 oraciones por respuesta.
-"""
+# 4. Inicializar Audio Player
+pygame.mixer.init()
 
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-pro",
-    system_instruction=prompt_sistema
-)
-
-chat_session = model.start_chat(history=[])
-
-# Configuracion de audio grabacion
+# Configuracion de audio
 fs = 44100
 record_key = "r"
 
-print(f"Sistema Jarvis (Versión con VOSK).")
-print(f"Presiona '{record_key}' para grabar. 'q' para salir.")
-print("-" * 50)
+# --- VARIABLES DE JUEGO ---
+jugadores = []
+fase_juego = "inicio"  # Fases: inicio, registro, descripciones, revelacion, preguntas, analisis
+ronda_actual = 0
+turno_descripcion_actual = 0  # Controla quien debe describir
+turno_adivinanza_actual = 0  # Controla quien debe adivinar
+descripciones = {}  # {indice_jugador: descripcion}
+adivinanzas = {}  # {ronda: {indice_adivinador: nombre_adivinado}}
+revelaciones = {}  # {indice_jugador: nombre_revelado}
+turnos_adivinanza = []
+historial_completo = []
+pregunta_actual = 0
+jugadores_seleccionados_preguntas = []
+model_gemini = None
+chat_session = None
+esperando_respuesta = False
+
+print("-" * 60)
+print("SISTEMA JARVIS - DINAMICA DE EQUIPO")
+print(f"Presiona '{record_key}' para hablar. 'q' para salir.")
+print("-" * 60)
+
+def inicializar_chat_con_contexto():
+    """Inicializa el chat de Gemini con el contexto del juego"""
+    global model_gemini, chat_session
+    
+    prompt_sistema = f"""
+Eres Jarvis, un asistente de inteligencia artificial facilitando una dinamica de equipo.
+Los jugadores son: {', '.join(jugadores)}.
+
+Tu rol es guiar la dinamica con elegancia y profesionalismo. Se conciso (maximo 2-3 oraciones).
+No uses emojis. Manten un tono formal pero amigable.
+
+IMPORTANTE: Cuando des instrucciones, menciona claramente el nombre del jugador que debe participar.
+"""
+    
+    model_gemini = genai.GenerativeModel(
+        model_name="gemini-2.5-pro",
+        system_instruction=prompt_sistema
+    )
+    chat_session = model_gemini.start_chat(history=[])
 
 def callback(indata, frames, time, status):
     if status:
         print(status)
     buffer.append(indata.copy())
 
-def transcribir_con_vosk(filename):
-    """
-    Transcribe el audio usando VOSK (offline y rápido)
-    """
+def transcribir_con_vosk(audio_data):
+    """Convierte el audio a texto usando Vosk"""
+    audio_int16 = (audio_data * 32767).astype(np.int16)
+    audio_bytes = audio_int16.tobytes()
+    
+    if rec_vosk.AcceptWaveform(audio_bytes):
+        resultado = json.loads(rec_vosk.Result())
+        return resultado.get("text", "")
+    else:
+        resultado = json.loads(rec_vosk.FinalResult())
+        return resultado.get("text", "")
+
+def obtener_respuesta_gemini(texto_usuario, contexto_adicional=""):
+    """Envia texto a Gemini con contexto del juego"""
     try:
-        wf = wave.open(filename, "rb")
-        
-        # Verificar que el formato sea compatible
-        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getframerate() not in [8000, 16000, 32000, 44100, 48000]:
-            print("El formato de audio debe ser WAV mono PCM.")
+        if not texto_usuario or len(texto_usuario) < 2:
             return None
         
-        rec = KaldiRecognizer(vosk_model, wf.getframerate())
-        rec.SetWords(True)
-        
-        texto_completo = ""
-        
-        while True:
-            data = wf.readframes(4000)
-            if len(data) == 0:
-                break
-            if rec.AcceptWaveform(data):
-                resultado = json.loads(rec.Result())
-                texto_completo += resultado.get("text", "") + " "
-        
-        # Obtener el resultado final
-        resultado_final = json.loads(rec.FinalResult())
-        texto_completo += resultado_final.get("text", "")
-        
-        wf.close()
-        
-        return texto_completo.strip()
-    
+        prompt_completo = f"{contexto_adicional}\n\nUsuario: {texto_usuario}" if contexto_adicional else texto_usuario
+        response = chat_session.send_message(prompt_completo)
+        return response.text.strip()
     except Exception as e:
-        print(f"Error en la transcripción VOSK: {e}")
-        return None
-
-def obtener_respuesta_gemini(texto_usuario):
-    """
-    Envía el texto transcrito a Gemini para obtener una respuesta
-    """
-    try:
-        respuesta_chat = chat_session.send_message(texto_usuario)
-        return respuesta_chat.text.strip()
-    except Exception as e:
-        print(f"Error en Gemini: {e}")
+        print(f"Error Gemini: {e}")
         return None
 
 def texto_a_voz(text, output_file="respuesta_jarvis.mp3"):
     try:
-        # Usamos el formato MP3 estandar (que es gratis)
         audio_generator = client_eleven.text_to_speech.convert(
-            voice_id="ErXwobaYiN019PkySvjV",  # ID de Antoni
+            voice_id="pNInz6obpgDQGcFmaJgB", 
             model_id="eleven_multilingual_v2",
             text=text
         )
         
-        # Guardamos el archivo MP3
         audio_bytes = b"".join(audio_generator)
         with open(output_file, "wb") as f:
             f.write(audio_bytes)
         
-        # Reproducimos usando Pygame (que si lee MP3)
         try:
             pygame.mixer.music.load(output_file)
             pygame.mixer.music.play()
-            
-            # Mantenemos el programa ocupado mientras suena el audio
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
-                
-            # Liberamos el archivo para poder sobrescribirlo despues
             pygame.mixer.music.unload()
             return True
-            
         except Exception as e:
-            print(f"Error reproduciendo audio: {e}")
+            print(f"Error player: {e}")
             return False
-
     except Exception as e:
-        print(f"Error generando voz con ElevenLabs: {e}")
+        print(f"Error ElevenLabs: {e}")
         return False
 
-# Variables de control
+def procesar_inicio(texto):
+    """Detecta si el usuario quiere iniciar el juego"""
+    global fase_juego
+    
+    palabras_inicio = ["comenzar", "empezar", "iniciar", "jugar", "vamos", "hola", "empecemos", "inicio", "si", "dale"]
+    
+    if any(palabra in texto.lower() for palabra in palabras_inicio):
+        fase_juego = "registro"
+        return "Excelente. Comenzaremos registrando a los participantes. Por favor, digan su nombre uno por uno. El ultimo participante debe decir su nombre seguido de la palabra ultimo o final."
+    else:
+        return "Hola, soy Jarvis. Estoy listo para facilitar una dinamica de equipo. Dime cuando quieras comenzar."
+
+def procesar_registro(texto):
+    """Procesa el registro de jugadores"""
+    global fase_juego, jugadores
+    
+    # Detectar si es el ultimo jugador
+    es_ultimo = any(palabra in texto.lower() for palabra in ["ultimo", "ultima", "final", "listo", "ya esta", "terminamos"])
+    
+    # Extraer el nombre - tomamos la primera palabra que no sea una palabra de control
+    palabras_control = ["soy", "me", "llamo", "mi", "nombre", "es", "ultimo", "ultima", "final"]
+    palabras = texto.lower().split()
+    nombre = None
+    
+    for palabra in palabras:
+        if palabra not in palabras_control and len(palabra) > 2:
+            nombre = palabra.capitalize()
+            break
+    
+    if nombre and nombre not in jugadores:
+        jugadores.append(nombre)
+        print(f"   Registrado: {nombre} ({len(jugadores)}/4)")
+        historial_completo.append(f"Jugador registrado: {nombre}")
+    
+    if es_ultimo and len(jugadores) >= 3:
+        inicializar_chat_con_contexto()
+        fase_juego = "descripciones"
+        ronda_actual = 0
+        return f"Perfecto. Tenemos {len(jugadores)} participantes: {', '.join(jugadores)}. Comenzaremos con la fase de descripciones. {jugadores[0]}, inicia tu dando una descripcion breve de alguno de tus companeros, sin decir su nombre."
+    elif es_ultimo and len(jugadores) < 3:
+        return f"Necesitamos al menos 3 jugadores. Actualmente tenemos {len(jugadores)}. Por favor, que se registre al menos un participante mas."
+    elif len(jugadores) >= 4:
+        inicializar_chat_con_contexto()
+        fase_juego = "descripciones"
+        return f"Tenemos el maximo de 4 jugadores: {', '.join(jugadores)}. Comenzaremos la dinamica. {jugadores[0]}, inicia tu dando una descripcion breve de alguno de tus companeros, sin decir su nombre."
+    else:
+        return f"Registrado. Tenemos {len(jugadores)} jugador{'es' if len(jugadores) > 1 else ''}. Siguiente participante, por favor."
+
+def procesar_descripciones(texto):
+    """Procesa la fase de descripciones - TODOS describen, uno por ronda"""
+    global fase_juego, descripciones, ronda_actual, turnos_adivinanza, turno_adivinanza_actual
+    
+    jugador_actual = jugadores[ronda_actual]
+    
+    # Si este jugador aun no ha dado su descripcion
+    if ronda_actual not in descripciones:
+        descripciones[ronda_actual] = texto
+        historial_completo.append(f"{jugador_actual} describio: {texto}")
+        print(f"   Descripcion de {jugador_actual} guardada.")
+        turnos_adivinanza = []
+        turno_adivinanza_actual = 0
+        
+        # Los demas deben adivinar
+        otros_indices = [i for i in range(len(jugadores)) if i != ronda_actual]
+        siguiente_adivinador = jugadores[otros_indices[0]]
+        return f"Descripcion registrada. {siguiente_adivinador}, a quien crees que {jugador_actual} describio?"
+    
+    # Si no, es una adivinanza
+    else:
+        # Extraer el nombre mencionado
+        nombre_adivinado = None
+        for nombre in jugadores:
+            if nombre.lower() in texto.lower():
+                nombre_adivinado = nombre
+                break
+        
+        if nombre_adivinado:
+            if ronda_actual not in adivinanzas:
+                adivinanzas[ronda_actual] = {}
+            
+            otros_indices = [i for i in range(len(jugadores)) if i != ronda_actual]
+            indice_adivinador = otros_indices[turno_adivinanza_actual]
+            
+            adivinanzas[ronda_actual][indice_adivinador] = nombre_adivinado
+            turnos_adivinanza.append(indice_adivinador)
+            historial_completo.append(f"{jugadores[indice_adivinador]} adivino: {nombre_adivinado}")
+            print(f"   {jugadores[indice_adivinador]} adivino: {nombre_adivinado}")
+        
+        # Verificar si todos los demas ya adivinaron
+        otros_indices = [i for i in range(len(jugadores)) if i != ronda_actual]
+        turno_adivinanza_actual += 1
+        
+        if turno_adivinanza_actual >= len(otros_indices):
+            # Pasar a la siguiente ronda
+            ronda_actual += 1
+            turno_adivinanza_actual = 0
+            
+            # Si terminamos todas las rondas de descripcion
+            if ronda_actual >= len(jugadores):
+                fase_juego = "revelacion"
+                ronda_actual = 0
+                return f"Excelente. Todas las descripciones completadas. Ahora viene la revelacion. {jugadores[0]}, revela a quien describiste tu."
+            
+            # Siguiente ronda
+            siguiente_jugador = jugadores[ronda_actual]
+            return f"Ronda completada. {siguiente_jugador}, ahora es tu turno. Da una descripcion de alguno de tus companeros."
+        
+        # Siguiente adivinador
+        siguiente_adivinador = jugadores[otros_indices[turno_adivinanza_actual]]
+        return f"{siguiente_adivinador}, tu turno. A quien crees que pertenece esta descripcion?"
+
+def procesar_revelacion(texto):
+    """Procesa las revelaciones"""
+    global fase_juego, ronda_actual, revelaciones
+    
+    jugador_actual = jugadores[ronda_actual]
+    
+    # Extraer el nombre revelado
+    nombre_revelado = None
+    for nombre in jugadores:
+        if nombre.lower() in texto.lower() and nombre != jugador_actual:
+            nombre_revelado = nombre
+            break
+    
+    if nombre_revelado:
+        revelaciones[ronda_actual] = nombre_revelado
+        historial_completo.append(f"{jugador_actual} revelo que describio a {nombre_revelado}")
+        print(f"\n   {jugador_actual} describio a: {nombre_revelado}")
+        
+        # Mostrar aciertos
+        if ronda_actual in adivinanzas:
+            for idx_adivinador, nombre_adivinado in adivinanzas[ronda_actual].items():
+                if nombre_adivinado == nombre_revelado:
+                    print(f"   ✓ {jugadores[idx_adivinador]} ACERTO!")
+                else:
+                    print(f"   ✗ {jugadores[idx_adivinador]} penso que era {nombre_adivinado}")
+    
+    ronda_actual += 1
+    
+    # Si terminamos todas las revelaciones
+    if ronda_actual >= len(jugadores):
+        fase_juego = "preguntas"
+        global jugadores_seleccionados_preguntas, pregunta_actual
+        jugadores_seleccionados_preguntas = random.sample(range(len(jugadores)), 2)
+        pregunta_actual = 0
+        
+        primer_jugador = jugadores[jugadores_seleccionados_preguntas[0]]
+        historial_completo.append(f"Seleccionados para preguntas: {jugadores[jugadores_seleccionados_preguntas[0]]} y {jugadores[jugadores_seleccionados_preguntas[1]]}")
+        
+        return f"Revelaciones completadas. Ahora viene la fase final. {primer_jugador}, primera pregunta: Como describirias al grupo en una sola palabra?"
+    
+    # Siguiente revelacion
+    siguiente = jugadores[ronda_actual]
+    return f"{siguiente}, tu turno de revelar a quien describiste."
+
+def procesar_preguntas(texto):
+    """Procesa las respuestas a preguntas finales"""
+    global fase_juego, pregunta_actual
+    
+    jugador_actual = jugadores[jugadores_seleccionados_preguntas[pregunta_actual]]
+    historial_completo.append(f"{jugador_actual} respondio: {texto}")
+    print(f"   Respuesta registrada: {texto}")
+    
+    pregunta_actual += 1
+    
+    # Despues de 2 respuestas, analisis
+    if pregunta_actual >= 2:
+        fase_juego = "analisis"
+        contexto_completo = "\n".join(historial_completo)
+        
+        prompt_analisis = f"""
+Basandote en toda la dinamica realizada:
+
+{contexto_completo}
+
+Genera un analisis de equipo profesional que incluya:
+1. Las fortalezas identificadas del grupo
+2. Como se complementan los miembros
+3. Una sugerencia concreta para mejorar la comunicacion del equipo
+
+Inicia diciendo: "He analizado todo lo que dijeron. Aqui tienen su informe de equipo."
+Se conciso pero perspicaz. Maximo 6 oraciones.
+"""
+        return obtener_respuesta_gemini("Genera el analisis final", prompt_analisis)
+    
+    # Segunda pregunta
+    segundo_jugador = jugadores[jugadores_seleccionados_preguntas[1]]
+    return f"{segundo_jugador}, tu turno. Que cualidad como fortaleza identificas en el grupo?"
+
+def procesar_entrada(texto):
+    """Router principal segun fase del juego"""
+    global fase_juego
+    
+    if fase_juego == "inicio":
+        return procesar_inicio(texto)
+    elif fase_juego == "registro":
+        return procesar_registro(texto)
+    elif fase_juego == "descripciones":
+        return procesar_descripciones(texto)
+    elif fase_juego == "revelacion":
+        return procesar_revelacion(texto)
+    elif fase_juego == "preguntas":
+        return procesar_preguntas(texto)
+    elif fase_juego == "analisis":
+        return "La dinamica ha finalizado. Gracias por participar. Presiona 'q' para salir."
+    
+    return "Procesando..."
+
+# SALUDO INICIAL CON VOZ
+print("\n=== JARVIS INICIANDO ===")
+saludo_inicial = "Bienvenidos. Soy Jarvis, su asistente para esta dinamica de equipo. Presionen la tecla R y digan cuando esten listos para comenzar."
+print(f"Jarvis: {saludo_inicial}")
+texto_a_voz(saludo_inicial)
+print("-" * 60)
+
+# Variables de control de audio
 grabando = False
 buffer = []
 stream = None
@@ -158,64 +372,44 @@ while True:
     try:
         if keyboard.is_pressed(record_key):
             if not grabando:
-                print("Grabando...")
+                print("\n>> Escuchando...")
                 grabando = True
                 buffer = []
-                stream = sd.InputStream(
-                    callback=callback,
-                    channels=1,
-                    samplerate=fs
-                )
+                stream = sd.InputStream(callback=callback, channels=1, samplerate=fs)
                 stream.start()
                 while keyboard.is_pressed(record_key):
                     pass
             else:
-                print("Procesando...")
+                print("   Procesando...")
                 grabando = False
                 stream.stop()
                 stream.close()
                 
                 if len(buffer) > 0:
-                    # Guardar audio en formato WAV mono 16-bit (requerido por VOSK)
                     datos_grabacion = np.concatenate(buffer, axis=0)
+                    texto_usuario = transcribir_con_vosk(datos_grabacion)
                     
-                    # Convertir a int16 para el formato WAV correcto
-                    datos_int16 = np.int16(datos_grabacion * 32767)
-                    write("temp_input.wav", fs, datos_int16)
-                    
-                    # Transcribir con VOSK (offline y rápido)
-                    print("Transcribiendo...")
-                    texto_usuario = transcribir_con_vosk("temp_input.wav")
-                    
-                    if texto_usuario and len(texto_usuario) > 0:
-                        print(f"Usuario: {texto_usuario}")
+                    if texto_usuario and len(texto_usuario) > 2:
+                        print(f"\n[Transcrito]: {texto_usuario}")
                         
-                        # Obtener respuesta de Gemini
-                        print("Generando respuesta...")
-                        respuesta_ai = obtener_respuesta_gemini(texto_usuario)
+                        # Procesar segun fase
+                        respuesta_jarvis = procesar_entrada(texto_usuario)
                         
-                        if respuesta_ai:
-                            print(f"Jarvis: {respuesta_ai}")
-                            
-                            # Generar y reproducir audio
-                            print("Sintetizando voz...")
-                            texto_a_voz(respuesta_ai)
-                            print("-" * 50)
-                        else:
-                            print("No se pudo obtener respuesta de Gemini.")
+                        if respuesta_jarvis:
+                            print(f"\nJarvis: {respuesta_jarvis}")
+                            texto_a_voz(respuesta_jarvis)
+                            print("-" * 60)
                     else:
-                        print("No se detecto voz o la transcripcion esta vacia.")
-                        print("   Intenta hablar mas claro o mas cerca del microfono.")
+                        print("No se escucho nada claro. Intenta de nuevo.")
                 
                 while keyboard.is_pressed(record_key):
                     pass
         
         if keyboard.is_pressed('q'):
-            print("Apagando sistemas...")
+            print("\nApagando sistemas...")
             if stream:
                 stream.stop()
                 stream.close()
-            # Limpieza final de pygame
             pygame.mixer.quit()
             break
             
