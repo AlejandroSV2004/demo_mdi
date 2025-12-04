@@ -5,14 +5,14 @@ import numpy as np
 import os
 import google.generativeai as genai
 from elevenlabs.client import ElevenLabs
-from elevenlabs.play import play # CORRECCION: Importamos desde el submodulo especifico
 from dotenv import load_dotenv
 import time
+import pygame 
 
 # Cargar variables de entorno
 load_dotenv()
 
-# --- CONFIGURACION GOOGLE GEMINI ---
+# --- CONFIGURACION ---
 api_key_google = os.environ.get("GOOGLE_API_KEY")
 api_key_eleven = os.environ.get("ELEVENLABS_API_KEY")
 
@@ -21,8 +21,12 @@ if not api_key_google or not api_key_eleven:
     exit()
 
 genai.configure(api_key=api_key_google)
+client_eleven = ElevenLabs(api_key=api_key_eleven)
 
-# Configuracion del modelo y personalidad
+# Inicializar el sistema de audio de pygame para reproducir MP3
+pygame.mixer.init()
+
+# Configuracion del modelo
 prompt_sistema = """
 Eres Jarvis, un asistente personal de inteligencia artificial al estilo de Iron Man.
 Responde de manera concisa, elegante y con un toque de humor sutil.
@@ -36,14 +40,11 @@ model = genai.GenerativeModel(
 
 chat_session = model.start_chat(history=[])
 
-# Configuracion ElevenLabs
-client_eleven = ElevenLabs(api_key=api_key_eleven)
-
-# Configuracion de audio
+# Configuracion de audio grabacion
 fs = 44100
 record_key = "r"
 
-print(f"Sistema Jarvis (Version Gemini + ElevenLabs v1.0).")
+print(f"Sistema Jarvis (Versión Final con Pygame).")
 print(f"Presiona '{record_key}' para grabar. 'q' para salir.")
 print("-" * 50)
 
@@ -65,16 +66,13 @@ def transcribir_y_responder_gemini(filename):
             print("Fallo el procesamiento del audio")
             return None, None
 
-        # Paso 1: Transcripcion
         prompt_transcripcion = "Transcribe exactamente lo que dice el usuario en este audio."
         respuesta_transcripcion = model.generate_content([prompt_transcripcion, archivo_audio])
         texto_usuario = respuesta_transcripcion.text.strip()
         
-        # Paso 2: Respuesta del chat
         respuesta_chat = chat_session.send_message(texto_usuario)
         texto_respuesta = respuesta_chat.text.strip()
         
-        # Limpieza
         genai.delete_file(archivo_audio.name)
         
         return texto_usuario, texto_respuesta
@@ -83,27 +81,39 @@ def transcribir_y_responder_gemini(filename):
         print(f"Error en Gemini: {e}")
         return None, None
 
-def texto_a_voz(text, output_file="respuesta_audio.mp3"):
+def texto_a_voz(text, output_file="respuesta_jarvis.mp3"):
     try:
-        # Generamos el audio usando el cliente y el ID de Rachel
+        # Usamos el formato MP3 estandar (que es gratis)
         audio_generator = client_eleven.text_to_speech.convert(
-            voice_id="21m00Tcm4TlvDq8ikWAM", 
+            voice_id="ErXwobaYiN019PkySvjV", # ID de Antoni ---- 
             model_id="eleven_multilingual_v2",
             text=text
         )
         
-        # Convertimos a bytes
+        # Guardamos el archivo MP3
         audio_bytes = b"".join(audio_generator)
-        
-        # Guardamos el archivo
         with open(output_file, "wb") as f:
             f.write(audio_bytes)
         
-        # Reproducimos
-        play(audio_bytes)
-        return True
+        # Reproducimos usando Pygame (que si lee MP3)
+        try:
+            pygame.mixer.music.load(output_file)
+            pygame.mixer.music.play()
+            
+            # Mantenemos el programa ocupado mientras suena el audio
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+                
+            # Liberamos el archivo para poder sobrescribirlo despues
+            pygame.mixer.music.unload()
+            return True
+            
+        except Exception as e:
+            print(f"Error reproduciendo audio: {e}")
+            return False
+
     except Exception as e:
-        print(f"Error generando voz: {e}")
+        print(f"Error generando voz con ElevenLabs: {e}")
         return False
 
 # Variables de control
@@ -155,6 +165,8 @@ while True:
             if stream:
                 stream.stop()
                 stream.close()
+            # Limpieza final de pygame
+            pygame.mixer.quit()
             break
             
     except KeyboardInterrupt:
