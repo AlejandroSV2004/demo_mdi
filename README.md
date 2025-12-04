@@ -1,4 +1,3 @@
-````markdown
 # 🤖 Jarvis AI Assistant (Python)
 
 Jarvis es un asistente virtual de voz inspirado en J.A.R.V.I.S. de Iron Man, diseñado para ser extremadamente rápido gracias a una arquitectura híbrida que combina reconocimiento de voz local con generación de respuestas y síntesis de voz en la nube. Además, posee una personalidad sarcástica y formal.
@@ -27,7 +26,7 @@ Instala todas las librerías necesarias con el siguiente comando:
 
 ```bash
 pip install sounddevice numpy scipy keyboard google-generativeai elevenlabs python-dotenv pygame vosk
-````
+```
 
 ---
 
@@ -89,6 +88,3 @@ ELEVENLABS_API_KEY=tu_clave_de_elevenlabs_aqui
    ```
 2. Presiona la tecla **`r`** para hablar y luego presiona **`r`** de nuevo para terminar la grabación (push-to-talk).
 3. Presiona **`q`** para cerrar el programa.
-
-```
-```
