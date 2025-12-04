@@ -7,7 +7,9 @@ import google.generativeai as genai
 from elevenlabs.client import ElevenLabs
 from dotenv import load_dotenv
 import time
-import pygame 
+import pygame
+import json # Necesario para leer la respuesta de Vosk
+from vosk import Model, KaldiRecognizer # Importamos Vosk
 
 # Cargar variables de entorno
 load_dotenv()
@@ -20,31 +22,47 @@ if not api_key_google or not api_key_eleven:
     print("Error: Faltan las claves en el archivo .env")
     exit()
 
+# 1. Configurar Gemini
 genai.configure(api_key=api_key_google)
-client_eleven = ElevenLabs(api_key=api_key_eleven)
-
-# Inicializar el sistema de audio de pygame para reproducir MP3
-pygame.mixer.init()
-
-# Configuracion del modelo
 prompt_sistema = """
 Eres Jarvis, un asistente personal de inteligencia artificial al estilo de Iron Man.
-Responde de manera concisa, elegante y con un toque de humor sutil.
+Responde de manera concisa, elegante, formal y con un toque de humor sutil.
 No uses emojis. Maximo 2 oraciones por respuesta.
 """
-
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-pro",
+model_gemini = genai.GenerativeModel(
+    model_name="gemini-2.5-pro", # El modelo Flash es mas rapido
     system_instruction=prompt_sistema
 )
+chat_session = model_gemini.start_chat(history=[])
 
-chat_session = model.start_chat(history=[])
+# 2. Configurar ElevenLabs
+client_eleven = ElevenLabs(api_key=api_key_eleven)
 
-# Configuracion de audio grabacion
+# 3. Configurar VOSK (Reconocimiento de voz local)
+print("Cargando modelo de voz local (Vosk)...")
+if not os.path.exists("model"):
+    print("ERROR: No encuentro la carpeta 'model'.")
+    print("Descarga 'vosk-model-small-es-0.42', descomprimelo y renombra la carpeta a 'model'.")
+    exit()
+    
+try:
+    # Cargamos el modelo en memoria (esto pasa solo una vez al inicio)
+    vosk_model = Model("model")
+    # Creamos el reconocedor
+    rec_vosk = KaldiRecognizer(vosk_model, 44100)
+except Exception as e:
+    print(f"Error cargando Vosk: {e}")
+    exit()
+
+# 4. Inicializar Audio Player
+pygame.mixer.init()
+
+# Configuracion de audio
 fs = 44100
 record_key = "r"
 
-print(f"Sistema Jarvis (Versión Final con Pygame).")
+print("-" * 50)
+print(f"SISTEMA JARVIS ONLINE (Modo Turbo: Vosk Local).")
 print(f"Presiona '{record_key}' para grabar. 'q' para salir.")
 print("-" * 50)
 
@@ -53,67 +71,66 @@ def callback(indata, frames, time, status):
         print(status)
     buffer.append(indata.copy())
 
-def transcribir_y_responder_gemini(filename):
+def transcribir_con_vosk(audio_data):
+    """
+    Convierte el audio raw a texto usando Vosk (Localmente)
+    """
+    print("Transcribiendo localmente...")
+    
+    # Vosk necesita audio en formato int16 (bytes), no float32
+    # Convertimos el audio de numpy (float) a int16 pcm
+    audio_int16 = (audio_data * 32767).astype(np.int16)
+    audio_bytes = audio_int16.tobytes()
+    
+    if rec_vosk.AcceptWaveform(audio_bytes):
+        resultado = json.loads(rec_vosk.Result())
+        return resultado.get("text", "")
+    else:
+        # Recuperar lo ultimo que quedo en el buffer
+        resultado = json.loads(rec_vosk.FinalResult())
+        return resultado.get("text", "")
+
+def obtener_respuesta_gemini(texto_usuario):
+    """
+    Envia solo el texto a Gemini (Mucho mas rapido que enviar audio)
+    """
     try:
-        print("Subiendo audio a Gemini...")
-        archivo_audio = genai.upload_file(path=filename)
-        
-        while archivo_audio.state.name == "PROCESSING":
-            time.sleep(1)
-            archivo_audio = genai.get_file(archivo_audio.name)
-
-        if archivo_audio.state.name == "FAILED":
-            print("Fallo el procesamiento del audio")
-            return None, None
-
-        prompt_transcripcion = "Transcribe exactamente lo que dice el usuario en este audio."
-        respuesta_transcripcion = model.generate_content([prompt_transcripcion, archivo_audio])
-        texto_usuario = respuesta_transcripcion.text.strip()
-        
-        respuesta_chat = chat_session.send_message(texto_usuario)
-        texto_respuesta = respuesta_chat.text.strip()
-        
-        genai.delete_file(archivo_audio.name)
-        
-        return texto_usuario, texto_respuesta
-
+        if not texto_usuario or len(texto_usuario) < 2:
+            return None
+            
+        print("Pensando respuesta...")
+        response = chat_session.send_message(texto_usuario)
+        return response.text.strip()
     except Exception as e:
-        print(f"Error en Gemini: {e}")
-        return None, None
+        print(f"Error Gemini: {e}")
+        return None
 
 def texto_a_voz(text, output_file="respuesta_jarvis.mp3"):
     try:
-        # Usamos el formato MP3 estandar (que es gratis)
+        # Usamos la voz de Adam (Español profundo/neutro)
         audio_generator = client_eleven.text_to_speech.convert(
-            voice_id="ErXwobaYiN019PkySvjV", # ID de Antoni ---- 
+            voice_id="pNInz6obpgDQGcFmaJgB", 
             model_id="eleven_multilingual_v2",
             text=text
         )
         
-        # Guardamos el archivo MP3
         audio_bytes = b"".join(audio_generator)
         with open(output_file, "wb") as f:
             f.write(audio_bytes)
         
-        # Reproducimos usando Pygame (que si lee MP3)
         try:
             pygame.mixer.music.load(output_file)
             pygame.mixer.music.play()
-            
-            # Mantenemos el programa ocupado mientras suena el audio
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
-                
-            # Liberamos el archivo para poder sobrescribirlo despues
             pygame.mixer.music.unload()
             return True
-            
         except Exception as e:
-            print(f"Error reproduciendo audio: {e}")
+            print(f"Error player: {e}")
             return False
 
     except Exception as e:
-        print(f"Error generando voz con ElevenLabs: {e}")
+        print(f"Error ElevenLabs: {e}")
         return False
 
 # Variables de control
@@ -125,7 +142,7 @@ while True:
     try:
         if keyboard.is_pressed(record_key):
             if not grabando:
-                print("Grabando...")
+                print(">> Escuchando...")
                 grabando = True
                 buffer = []
                 stream = sd.InputStream(
@@ -137,25 +154,32 @@ while True:
                 while keyboard.is_pressed(record_key):
                     pass
             else:
-                print("Procesando...")
+                print("procesando...")
                 grabando = False
                 stream.stop()
                 stream.close()
                 
                 if len(buffer) > 0:
+                    # Unimos todo el audio grabado
                     datos_grabacion = np.concatenate(buffer, axis=0)
-                    write("temp_input.wav", fs, datos_grabacion)
                     
-                    texto_us, respuesta_ai = transcribir_y_responder_gemini("temp_input.wav")
+                    # PASO 1: Transcripcion Local (VOSK) - Instantanea
+                    texto_usuario = transcribir_con_vosk(datos_grabacion)
                     
-                    if texto_us and respuesta_ai:
-                        print(f"Usuario: {texto_us}")
-                        print(f"Jarvis: {respuesta_ai}")
+                    if texto_usuario:
+                        print(f"Tú: {texto_usuario}")
                         
-                        texto_a_voz(respuesta_ai)
-                        print("-" * 50)
+                        # PASO 2: Cerebro (Gemini) - Texto a Texto
+                        respuesta_jarvis = obtener_respuesta_gemini(texto_usuario)
+                        
+                        if respuesta_jarvis:
+                            print(f"Jarvis: {respuesta_jarvis}")
+                            
+                            # PASO 3: Voz (ElevenLabs)
+                            texto_a_voz(respuesta_jarvis)
+                            print("-" * 50)
                     else:
-                        print("No se pudo procesar la respuesta.")
+                        print("No escuché nada claro.")
                 
                 while keyboard.is_pressed(record_key):
                     pass
@@ -165,7 +189,6 @@ while True:
             if stream:
                 stream.stop()
                 stream.close()
-            # Limpieza final de pygame
             pygame.mixer.quit()
             break
             
