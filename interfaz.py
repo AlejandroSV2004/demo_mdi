@@ -6,7 +6,7 @@ import numpy as np
 import pygame
 import json
 from vosk import Model, KaldiRecognizer
-from elevenlabs.client import ElevenLabs  # Volvemos a ElevenLabs
+from elevenlabs.client import ElevenLabs
 import os
 import threading
 from dotenv import load_dotenv
@@ -81,17 +81,27 @@ class InterfazImpostor:
     def crear_interfaz(self):
         """Crea UI limpia y moderna sin emojis"""
         # Fuentes
-        font_texto = tkfont.Font(family="Segoe UI", size=14)
-        font_texto_app = tkfont.Font(family="Segoe UI", size=14)
-        font_btn = tkfont.Font(family="Segoe UI", size=13, weight="bold")
-        font_palabra = tkfont.Font(family="Segoe UI", size=24, weight="bold")
+        self.font_texto = tkfont.Font(family="Segoe UI", size=14)
+        self.font_texto_app = tkfont.Font(family="Segoe UI", size=14)
+        self.font_btn = tkfont.Font(family="Segoe UI", size=13, weight="bold")
+        
+        # FUENTE GIGANTE PARA LA PALABRA OCULTA
+        self.font_palabra_gigante = tkfont.Font(family="Segoe UI", size=40, weight="bold")
+        
+        self.font_estado = tkfont.Font(family="Segoe UI", size=11, slant="italic")
         
         # Espacio superior
         tk.Frame(self.root, bg="#FFFFFF", height=20).pack()
         
-        # Circulo IA
-        self.label_imagen = tk.Label(self.root, bg="#FFFFFF", image=self.img_ia)
-        self.label_imagen.pack(pady=10)
+        # --- ÁREA CENTRAL (IMAGEN O PALABRA) ---
+        # Usamos un Label que cambiará entre Imagen y Texto
+        self.label_central = tk.Label(
+            self.root, 
+            bg="#FFFFFF", 
+            image=self.img_ia,
+            compound="center" # Permite centrar texto si no hay imagen
+        )
+        self.label_central.pack(pady=10)
         
         # Conversacion
         frame_conv = tk.Frame(self.root, bg="#FFFFFF")
@@ -99,7 +109,7 @@ class InterfazImpostor:
         
         self.texto_conv = tk.Text(
             frame_conv,
-            font=font_texto,
+            font=self.font_texto,
             bg="#F8F9FA",
             fg="#333333",
             wrap="word",
@@ -112,8 +122,8 @@ class InterfazImpostor:
         self.texto_conv.pack(fill="both", expand=True)
         self.texto_conv.config(state="disabled")
         
-        self.texto_conv.tag_config("app", foreground="#0064FF", font=font_texto_app)
-        self.texto_conv.tag_config("user", foreground="#333333", font=font_texto)
+        self.texto_conv.tag_config("app", foreground="#0064FF", font=self.font_texto_app)
+        self.texto_conv.tag_config("user", foreground="#333333", font=self.font_texto)
         
         # Frame mostrar palabra (oculto inicialmente)
         self.frame_palabra = tk.Frame(self.root, bg="#FFFFFF")
@@ -130,11 +140,11 @@ class InterfazImpostor:
         self.btn_ver_palabra = tk.Button(
             self.frame_palabra,
             text="Ver mi palabra",
-            font=font_btn,
+            font=self.font_btn,
             bg="#FFFFFF",
             fg="#0064FF",
             activebackground="#F0F0F0",
-            command=self.revelar_palabra,
+            command=self.revelar_palabra_animada, # Nueva función
             relief="flat",
             bd=1,
             padx=20,
@@ -142,14 +152,6 @@ class InterfazImpostor:
             cursor="hand2"
         )
         self.btn_ver_palabra.pack(pady=5)
-        
-        self.label_palabra_revelada = tk.Label(
-            self.frame_palabra,
-            text="",
-            font=font_palabra,
-            fg="#0064FF",
-            bg="#FFFFFF"
-        )
         
         # Controles inferiores
         frame_ctrl = tk.Frame(self.root, bg="#FFFFFF")
@@ -162,7 +164,7 @@ class InterfazImpostor:
         self.btn_grabar = tk.Button(
             frame_botones,
             text="MANTEN PARA HABLAR",
-            font=font_btn,
+            font=self.font_btn,
             bg="#FFFFFF",
             fg="#D93025", # Rojo Google
             activebackground="#FCE8E6",
@@ -182,7 +184,7 @@ class InterfazImpostor:
         self.btn_listo = tk.Button(
             frame_botones,
             text="LISTO",
-            font=font_btn,
+            font=self.font_btn,
             bg="#FFFFFF",
             fg="#1E8E3E", # Verde Google
             activebackground="#E6F4EA",
@@ -201,7 +203,7 @@ class InterfazImpostor:
         self.label_estado = tk.Label(
             self.root,
             text="Inicializando sistema...",
-            font=tkfont.Font(family="Segoe UI", size=11, slant="italic"),
+            font=self.font_estado,
             fg="#999999",
             bg="#FFFFFF"
         )
@@ -338,6 +340,10 @@ class InterfazImpostor:
         self.frame_palabra.pack_forget()
         self.btn_listo.config(state="disabled", cursor="arrow")
         
+        # Asegurarse que la imagen esté visible si no estamos revelando nada
+        if self.label_central.cget("text") == "":
+             self.label_central.config(image=self.img_ia)
+
         if fase == "inicio":
             self.label_estado.config(text="Presiona Grabar y di 'Comenzar'")
         
@@ -353,9 +359,8 @@ class InterfazImpostor:
                 self.frame_palabra.pack(pady=10)
                 
                 self.btn_ver_palabra.config(state="normal")
-                self.label_palabra_revelada.pack_forget()
-                
-                self.btn_listo.config(state="normal", cursor="hand2")
+                # El botón listo se habilita solo despues de ver la palabra
+                self.btn_listo.config(state="disabled", cursor="arrow")
         
         elif fase == "jugando":
             jugador = info.get("jugador_actual", "")
@@ -370,19 +375,47 @@ class InterfazImpostor:
         elif fase == "resultado":
             self.label_estado.config(text="Juego terminado!")
     
-    def revelar_palabra(self):
+    def revelar_palabra_animada(self):
+        """Muestra la palabra reemplazando la imagen por 3 segundos"""
         info = self.asistente.obtener_info_ui()
         es_impostor = info.get("es_impostor", False)
         palabra = info.get("palabra")
         
+        # 1. Definir texto y color
         if es_impostor:
-            self.label_palabra_revelada.config(text="ERES EL IMPOSTOR", fg="#D93025")
+            texto_mostrar = "¡ERES EL\nIMPOSTOR!"
+            color_mostrar = "#D93025" # Rojo
+        elif palabra:
+            texto_mostrar = palabra.upper()
+            color_mostrar = "#1E8E3E" # Verde
         else:
-            self.label_palabra_revelada.config(text=f"{palabra.upper()}", fg="#1E8E3E")
+            texto_mostrar = "ERROR"
+            color_mostrar = "orange"
+
+        # 2. Ocultar Imagen y Mostrar Texto en el Label Central
+        self.label_central.config(
+            image="", 
+            text=texto_mostrar, 
+            font=self.font_palabra_gigante, 
+            fg=color_mostrar
+        )
         
-        self.label_palabra_revelada.pack(pady=10)
+        # 3. Deshabilitar boton "Ver palabra"
         self.btn_ver_palabra.config(state="disabled")
-    
+        self.label_estado.config(text="Memoriza tu palabra...")
+
+        # 4. Programar restauración en 3 segundos
+        self.root.after(3000, self.restaurar_imagen_y_habilitar_listo)
+
+    def restaurar_imagen_y_habilitar_listo(self):
+        """Restaura la imagen y permite continuar"""
+        # Volver a poner la imagen
+        self.label_central.config(image=self.img_ia, text="")
+        
+        # Habilitar botón LISTO
+        self.btn_listo.config(state="normal", cursor="hand2")
+        self.label_estado.config(text="Presiona LISTO para continuar")
+
     def marcar_listo(self):
         """Acción del botón Listo"""
         self.btn_listo.config(state="disabled")
@@ -398,13 +431,9 @@ class InterfazImpostor:
     
     def texto_a_voz(self, text):
         """TTS ElevenLabs (Sincrono, ejecutado en hilo separado)"""
-        # IMPORTANTE: Esta funcion se llama desde hilos secundarios (_procesar_audio_thread o _marcar_listo_thread)
-        # por lo que las operaciones lentas aqui no congelan la UI.
         try:
-            # Notificar en UI que empieza a hablar
             self.root.after(0, lambda: self.label_estado.config(text="Jarvis hablando..."))
             
-            # Generar audio con ElevenLabs
             audio_gen = self.client_eleven.text_to_speech.convert(
                 voice_id="pNInz6obpgDQGcFmaJgB",
                 model_id="eleven_multilingual_v2",
@@ -413,12 +442,10 @@ class InterfazImpostor:
             
             audio_bytes = b"".join(audio_gen)
             
-            # Guardar archivo temporal
             archivo_audio = "temp_jarvis.mp3"
             with open(archivo_audio, "wb") as f:
                 f.write(audio_bytes)
             
-            # Reproducir
             pygame.mixer.music.load(archivo_audio)
             pygame.mixer.music.play()
             
@@ -427,17 +454,14 @@ class InterfazImpostor:
             
             pygame.mixer.music.unload()
             
-            # Notificar fin
             self.root.after(0, lambda: self.label_estado.config(text="Listo para continuar"))
             
         except Exception as e:
             error_msg = str(e)
             print(f"Error TTS ElevenLabs: {e}")
-            
             msg_error = "Error en audio"
             if "401" in error_msg or "quota" in error_msg.lower():
                 msg_error = "Sin creditos ElevenLabs"
-                
             self.root.after(0, lambda: self.label_estado.config(text=msg_error))
 
 def main():
