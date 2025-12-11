@@ -3,6 +3,7 @@ import json
 import random
 import google.generativeai as genai
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -15,7 +16,7 @@ class AsistenteImpostor:
         self.generos = {}
         self.fase = "inicio"
       
-        # Palabras ecuatorianas (Se mantienen igual)
+        # Palabras ecuatorianas
         self.palabras_ecuador = [
             "encebollado", "ceviche", "hornado", "guatita", "cuy", "bolon", 
             "corvina", "empanada", "humita", "bollo", "fritada", "salchipapa",
@@ -33,6 +34,10 @@ class AsistenteImpostor:
         self.turno_actual = 0
         self.orden_turnos = []
         
+        # Rate limiting
+        self.ultimo_request_ia = 0
+        self.min_intervalo = 2.0
+        
         self.inicializar_ia()
     
     def inicializar_ia(self):
@@ -42,54 +47,70 @@ Eres Jarvis, un asistente IA inteligente y muy amable encargado de moderar el ju
 
 PERSONALIDAD:
 - Tono: Formal pero cálido, educado y servicial.
-- Estilo: Neutro y profesional. Evita el exceso de jerga. Puedes usar un "Chévere" o "Listo" muy ocasionalmente para sonar natural, pero mantén la compostura.
+- Estilo: Neutro y profesional. Evita el exceso de jerga.
 - Objetivo: Que el juego sea claro y organizado.
 
 FLUJO DEL JUEGO:
-1. SALUDO: Al inicio, saluda cordialmente y explica brevemente las reglas. NO pidas nombres aún. Espera a que digan "Comenzar".
-2. REGISTRO: Solo cuando digan "Comenzar", pide los nombres de los participantes uno por uno.
-3. JUEGO: 
-   - Un jugador es el impostor (no conoce la palabra secreta).
-   - Los demás conocen la palabra.
-   - Deben dar pistas sutiles.
+1. SALUDO: Al inicio, saluda cordialmente y explica brevemente las reglas.
+2. REGISTRO: Solo cuando digan "Comenzar", pide los nombres de los participantes.
+3. JUEGO: Un jugador es el impostor (no conoce la palabra secreta).
 4. VOTACIÓN: Al final, coordinas la votación para descubrir al impostor.
 
 REGLAS DE INTERACCIÓN:
-- Sé conciso (máximo 2 frases por turno, salvo explicaciones).
+- Sé conciso (máximo 2 frases por turno).
 - NO uses emojis.
-- Durante el registro, céntrate estrictamente en capturar los nombres, no te desvíes con charlas.
-
-PALABRAS PARA ADIVINAR:
-(Lista interna de palabras ecuatorianas)
 """
         
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-2.0-flash-exp",
             system_instruction=prompt_sistema
         )
         self.chat = self.model.start_chat(history=[])
     
     def detectar_genero(self, nombre):
-        """IA detecta genero"""
-        try:
-            prompt = f"Nombre '{nombre}' es hombre o mujer en Ecuador? SOLO responde: 'hombre' o 'mujer'"
-            resp = self.model.generate_content(prompt)
-            genero = resp.text.strip().lower()
-            return "hombre" if "hombre" in genero else "mujer"
-        except Exception as e:
-            print(f"   (Genero por defecto, error: {e})")
-            if nombre.lower().endswith(('a', 'ela', 'ita')):
-                return "mujer"
+        """Detección simple de género sin IA"""
+        nombres_femeninos = ['ana', 'maria', 'carmen', 'lucia', 'sofia', 'elena', 'rosa', 'paula']
+        nombres_masculinos = ['david', 'luis', 'diego', 'daniel', 'carlos', 'juan', 'pedro', 'jose']
+        
+        nombre_lower = nombre.lower()
+        
+        if nombre_lower in nombres_femeninos:
+            return "mujer"
+        elif nombre_lower in nombres_masculinos:
             return "hombre"
+        elif nombre_lower.endswith(('a', 'ela', 'ita', 'ina')):
+            return "mujer"
+        else:
+            return "hombre"
+    
+    def _esperar_rate_limit(self):
+        """Espera si es necesario para respetar rate limit"""
+        tiempo_transcurrido = time.time() - self.ultimo_request_ia
+        if tiempo_transcurrido < self.min_intervalo:
+            time.sleep(self.min_intervalo - tiempo_transcurrido)
+        self.ultimo_request_ia = time.time()
     
     def procesar_entrada(self, texto_usuario):
         """IA interpreta y decide"""
+        print(f"\n[PROCESANDO] Entrada: '{texto_usuario}' | Fase: {self.fase} | Turno: {self.turno_actual}")
+        
         self.historial_completo.append(f"Usuario: {texto_usuario}")
         
+        # SIEMPRE intentar fallback primero
+        respuesta_fallback = self._respuesta_fallback(texto_usuario)
+        
+        # Si el fallback dio una respuesta válida, usarla
+        if respuesta_fallback and "[" in respuesta_fallback:
+            print(f"[FALLBACK] Respuesta: {respuesta_fallback}")
+            self.historial_completo.append(f"Jarvis: {respuesta_fallback}")
+            return respuesta_fallback
+        
+        # Solo usar IA para casos complejos
         contexto = self._construir_contexto()
         prompt = self._generar_prompt(texto_usuario, contexto)
         
         try:
+            self._esperar_rate_limit()
             response = self.chat.send_message(prompt)
             respuesta_ia = response.text.strip()
         
@@ -103,269 +124,218 @@ PALABRAS PARA ADIVINAR:
             print(f"Error IA: {error_msg}")
             
             if "429" in error_msg or "quota" in error_msg.lower():
-                return self._respuesta_fallback(texto_usuario)
+                # Si hay error de cuota, usar fallback genérico
+                fallback_generico = self._respuesta_fallback_generica(texto_usuario)
+                return fallback_generico
             
             return "Disculpa, no he podido procesar eso. ¿Podrías repetirlo?"
     
-    def _respuesta_fallback(self, texto):
-        """Respuestas básicas sin IA cuando hay rate limit"""
+    def _respuesta_fallback_generica(self, texto):
+        """Fallback ultra simple cuando todo falla"""
         texto_lower = texto.lower()
         
-        # Inicio
-        if self.fase == "inicio":
-            if "comenzar" in texto_lower:
-                self.fase = "registro"
-                return "[INICIAR] Excelente. Por favor, indíqueme el nombre del primer participante."
-            return "Hola, soy Jarvis. El juego consiste en descubrir al impostor entre ustedes. Diga 'Comenzar' cuando estén listos."
+        if self.fase == "mostrando_palabras":
+            return "[JUGADOR_LISTO] Perfecto, siguiente jugador por favor."
+        elif self.fase == "jugando":
+            return "[GUARDAR_PISTA] Entendido. Siguiente jugador."
+        elif self.fase == "votacion":
+            for jugador in self.jugadores:
+                if jugador.lower() in texto_lower:
+                    return f"[VOTAR:{jugador}] Voto registrado."
         
-        # Registro
+        return "Continúa."
+    
+    def _respuesta_fallback(self, texto):
+        """Respuestas básicas sin IA - MEJORADO"""
+        texto_lower = texto.lower()
+        
+        print(f"[FALLBACK CHECK] Fase: {self.fase}, Texto: '{texto_lower}'")
+        
+        # === INICIO ===
+        if self.fase == "inicio":
+            if "comenzar" in texto_lower or "empezar" in texto_lower or "dale" in texto_lower:
+                self.fase = "registro"
+                print("[FALLBACK] -> REGISTRO")
+                return "[INICIAR] Excelente. Por favor, indíqueme el nombre del primer participante."
+            return None
+        
+        # === REGISTRO ===
         if self.fase == "registro":
-            palabras = texto_lower.split()
+            # Detectar fin de registro
+            if any(palabra in texto_lower for palabra in ["último", "ultima", "listo", "ya estamos", "ya somos", "todos"]):
+                if len(self.jugadores) >= 3:
+                    self._iniciar_juego()
+                    return f"[INICIAR_JUEGO] Perfecto, {len(self.jugadores)} jugadores registrados. Ahora cada uno verá su palabra. {self.jugadores[0]}, presiona 'Ver mi palabra'."
+                else:
+                    return f"Necesitamos al menos 3 jugadores. Tenemos {len(self.jugadores)}."
+            
+            # Extraer nombre
+            palabras = texto.split()
             nombre = None
+            palabras_ignorar = ["soy", "me", "llamo", "es", "el", "ella", "yo", "mi", "nombre", "y"]
+            
             for p in palabras:
-                if p not in ["soy", "me", "llamo", "es", "el", "ella"] and len(p) > 2:
-                    nombre = p.capitalize()
+                p_clean = p.strip(".,;:!¿?").lower()
+                if p_clean not in palabras_ignorar and len(p_clean) > 2 and p_clean.isalpha():
+                    nombre = p.strip(".,;:!¿?").capitalize()
                     break
             
             if nombre:
                 if nombre not in self.jugadores:
                     self.jugadores.append(nombre)
                     self.generos[nombre] = self.detectar_genero(nombre)
+                    print(f"[FALLBACK] Registrado: {nombre}")
                     
                     if len(self.jugadores) >= 5:
                          self._iniciar_juego()
-                         return f"[REGISTRAR:{nombre}] [INICIAR_JUEGO] Registro completo. Iniciando juego."
+                         return f"[REGISTRAR:{nombre}] [INICIAR_JUEGO] Tenemos 5 jugadores. Iniciando juego. {self.jugadores[0]}, presiona 'Ver mi palabra'."
                     
-                    return f"[REGISTRAR:{nombre}] Anotado {nombre}. ¿Quién es el siguiente?"
+                    return f"[REGISTRAR:{nombre}] Perfecto, {nombre} registrado. ¿Quién más va a jugar?"
                 else:
-                    return f"{nombre} ya está en la lista. ¿Siguiente nombre?"
+                    return f"{nombre} ya está registrado. ¿Siguiente jugador?"
+            
+            return None
         
-        return "Entendido. Continuemos."
-
+        # === MOSTRANDO PALABRAS === ¡CRÍTICO!
+        if self.fase == "mostrando_palabras":
+            # Detectar CUALQUIER confirmación
+            confirmaciones = ["listo", "ok", "ya", "entendido", "siguiente", "vi", "ví", "bien", "dale", "continuar"]
+            if any(palabra in texto_lower for palabra in confirmaciones):
+                print(f"[FALLBACK] Confirmación detectada. Turno actual antes: {self.turno_actual}")
+                
+                if self.turno_actual < len(self.jugadores):
+                    jugador_actual = self.jugadores[self.turno_actual]
+                    self.jugadores_listos.add(jugador_actual)
+                    self.turno_actual += 1
+                    
+                    print(f"[FALLBACK] Jugador {jugador_actual} listo. Turno ahora: {self.turno_actual}/{len(self.jugadores)}")
+                    print(f"[FALLBACK] Listos: {len(self.jugadores_listos)}/{len(self.jugadores)}")
+                    
+                    # Verificar si todos terminaron
+                    if self.turno_actual >= len(self.jugadores):
+                        print("[FALLBACK] ¡TODOS LISTOS! Iniciando fase de juego")
+                        self.fase = "jugando"
+                        self.turno_actual = 0
+                        self.orden_turnos = list(range(len(self.jugadores)))
+                        random.shuffle(self.orden_turnos)
+                        primer_jugador = self.jugadores[self.orden_turnos[0]]
+                        return f"[JUGADOR_LISTO] Excelente. Todos han visto sus palabras. Comenzamos con las pistas. {primer_jugador}, da tu primera pista."
+                    
+                    # Hay más jugadores
+                    siguiente = self.jugadores[self.turno_actual]
+                    return f"[JUGADOR_LISTO] Perfecto. {siguiente}, ahora es tu turno. Presiona 'Ver mi palabra'."
+                
+            return None
+        
+        # === JUGANDO ===
+        if self.fase == "jugando":
+            if len(texto.strip()) > 2:
+                if self.turno_actual < len(self.orden_turnos):
+                    idx = self.orden_turnos[self.turno_actual]
+                    self.pistas_ronda.append(f"{self.jugadores[idx]}: {texto}")
+                    self.turno_actual += 1
+                    
+                    print(f"[FALLBACK] Pista guardada. Turno: {self.turno_actual}/{len(self.jugadores)}")
+                    
+                    if self.turno_actual >= len(self.jugadores):
+                        self.fase = "decision_ronda"
+                        return "[GUARDAR_PISTA] Interesante. Todos han dado sus pistas. ¿Desean otra ronda o votar?"
+                    
+                    siguiente_idx = self.orden_turnos[self.turno_actual]
+                    siguiente = self.jugadores[siguiente_idx]
+                    return f"[GUARDAR_PISTA] Bien. {siguiente}, tu turno para dar una pista."
+            return None
+        
+        # === DECISIÓN RONDA ===
+        if self.fase == "decision_ronda":
+            if any(palabra in texto_lower for palabra in ["otra", "más", "si", "sí", "continuar", "nueva"]):
+                self.ronda_actual += 1
+                self.turno_actual = 0
+                self.pistas_ronda = []
+                self.fase = "jugando"
+                random.shuffle(self.orden_turnos)
+                primer_idx = self.orden_turnos[0]
+                primer_jugador = self.jugadores[primer_idx]
+                return f"[NUEVA_RONDA] De acuerdo, nueva ronda de pistas. {primer_jugador}, comienza."
+            elif any(palabra in texto_lower for palabra in ["votar", "votación", "votacion", "ya", "no", "terminar"]):
+                self.fase = "votacion"
+                return f"[INICIAR_VOTACION] Perfecto, iniciemos la votación. {self.jugadores[0]}, ¿a quién votas como impostor?"
+            return None
+        
+        # === VOTACIÓN ===
+        if self.fase == "votacion":
+            for jugador in self.jugadores:
+                if jugador.lower() in texto_lower:
+                    votante_idx = len(self.votos_impostor)
+                    if votante_idx < len(self.jugadores):
+                        votante = self.jugadores[votante_idx]
+                        self.votos_impostor[votante] = jugador
+                        
+                        print(f"[FALLBACK] Voto: {votante} -> {jugador}")
+                        
+                        if len(self.votos_impostor) >= len(self.jugadores):
+                            self._determinar_ganador()
+                            impostor_real = self.jugadores[self.impostor_index]
+                            return f"[VOTAR:{jugador}] Votación completa. El impostor era... ¡{impostor_real}!"
+                        
+                        siguiente_idx = len(self.votos_impostor)
+                        siguiente_votante = self.jugadores[siguiente_idx]
+                        return f"[VOTAR:{jugador}] Voto registrado. {siguiente_votante}, ¿a quién votas?"
+            return None
+        
+        return None
+    
     def _construir_contexto(self):
         """Contexto del juego actualizado"""
-        ctx = f"FASE ACTUAL: {self.fase}\n"
-        ctx += f"JUGADORES ({len(self.jugadores)}): {', '.join(self.jugadores) if self.jugadores else 'Ninguno'}\n"
-        
-        if self.fase == "mostrando_palabras":
-            ctx += f"TURNO DE VER: {self.jugadores[self.turno_actual] if self.turno_actual < len(self.jugadores) else 'Fin'}\n"
-        
-        if self.fase == "jugando" and self.turno_actual < len(self.orden_turnos):
-            idx = self.orden_turnos[self.turno_actual]
-            ctx += f"TURNO DE PISTA: {self.jugadores[idx]}\n"
-            ctx += f"PISTAS RONDA: {len(self.pistas_ronda)}\n"
-        
+        ctx = f"FASE: {self.fase}\n"
+        ctx += f"JUGADORES: {', '.join(self.jugadores)}\n"
+        ctx += f"TURNO: {self.turno_actual}\n"
         return ctx
     
     def _generar_prompt(self, texto, contexto):
         """Prompt dinámico según fase"""
-        
-        # --- FASE 1: INICIO ---
-        if self.fase == "inicio":
-            return f"""{contexto}
-Usuario: "{texto}"
-
-TAREA:
-1. Si el usuario saluda o pregunta qué es: Explica amablemente el juego (descubrir al impostor mediante pistas) y diles que digan "Comenzar" para iniciar.
-2. Si el usuario dice "Comenzar", "Empezar" o "Dale": Responde con el comando [INICIAR] y pide el primer nombre formalmente.
-
-RESPUESTA:
-- Explicación: "Hola, bienvenidos. En este juego..."
-- Inicio detectado: "[INICIAR] Perfecto. Por favor, indíqueme el nombre del primer jugador."
-NO USES EMOJIS.
-"""
-        
-        # --- FASE 2: REGISTRO ---
-        elif self.fase == "registro":
-            return f"""{contexto}
-Usuario: "{texto}"
-
-TAREA: Registrar nombres.
-ESTADO: Tienes {len(self.jugadores)} jugadores registrados.
-
-INSTRUCCIONES:
-1. Extrae SOLO el nombre propio del texto. Ignora saludos o palabras extra.
-2. Si detectas un nombre nuevo: Responde [REGISTRAR:Nombre] y pide amablemente el siguiente.
-3. Si detectas "último", "listo" o "ya estamos" y hay al menos 3 jugadores: Responde [INICIAR_JUEGO].
-4. Mantén la formalidad. Ejemplo: "Correcto, [Nombre] registrado. ¿Quién sigue?".
-
-EJEMPLOS:
-- "Me llamo Carlos" -> "[REGISTRAR:Carlos] Muy bien, Carlos registrado. ¿Siguiente?"
-- "Ana" -> "[REGISTRAR:Ana] Ana anotada. ¿Quién más?"
-- "Ya estamos todos" -> "[INICIAR_JUEGO] Excelente, comencemos."
-
-NO USES EMOJIS.
-"""
-        
-        # --- FASE 3: MOSTRANDO PALABRAS ---
-        elif self.fase == "mostrando_palabras":
-            jugador_actual = self.jugadores[self.turno_actual] if self.turno_actual < len(self.jugadores) else "?"
-            return f"""{contexto}
-Usuario: "{texto}"
-Esperando confirmación de: {jugador_actual}
-
-TAREA: Confirmar que el jugador vio su palabra secreta.
-PALABRAS CLAVE: listo, ok, ya, entendido, siguiente.
-
-RESPUESTA:
-- Si confirma: [JUGADOR_LISTO] + "Gracias {jugador_actual}. Por favor llame al siguiente jugador."
-- Si no es claro: Pregunta cortésmente si ya visualizó la palabra.
-NO USES EMOJIS.
-"""
-        
-        # --- FASE 4: JUGANDO ---
-        elif self.fase == "jugando":
-            if self.turno_actual >= len(self.orden_turnos):
-                 return texto # Fallback
-            
-            idx = self.orden_turnos[self.turno_actual]
-            jugador = self.jugadores[idx]
-            
-            return f"""{contexto}
-TURNO DE: {jugador}
-PALABRA SECRETA: {self.palabra_secreta}
-
-Usuario ({jugador}): "{texto}"
-
-TAREA: Analizar la pista dada.
-1. ¿Es válida? (No dice la palabra prohibida).
-2. Responde [GUARDAR_PISTA] y da un feedback MUY BREVE y amable (ej: "Interesante pista", "Muy bien").
-3. Llama al siguiente jugador por su nombre.
-
-RESPUESTA:
-[GUARDAR_PISTA] + Feedback breve + Llamada al siguiente.
-NO USES EMOJIS.
-"""
-        
-        # --- OTRAS FASES ---
-        elif self.fase == "decision_ronda":
-            return f"""{contexto}
-Usuario: "{texto}"
-TAREA: ¿Quieren otra ronda de pistas o votar ya?
-RESPUESTA:
-- Otra ronda: [NUEVA_RONDA] "De acuerdo, hagamos otra ronda."
-- Votar: [INICIAR_VOTACION] "Entendido, pasemos a la votación."
-"""
-
-        elif self.fase == "votacion":
-            votante_idx = len(self.votos_impostor)
-            votante_actual = self.jugadores[votante_idx] if votante_idx < len(self.jugadores) else "?"
-            return f"""{contexto}
-Votante actual: {votante_actual}
-Usuario: "{texto}"
-
-TAREA: Identificar a quién vota {votante_actual}.
-RESPUESTA:
-- Nombre detectado: [VOTAR:NombreVotado] "Voto registrado."
-- Si no detectas nombre: Pregunta amablemente "¿A quién deseas votar?"
-"""
-
-        elif self.fase == "resultado":
-            return f"""{contexto}
-TAREA: Dar el resultado final de forma amena pero formal.
-1. Revela quién era el impostor y si ganaron o perdieron.
-2. Invita a jugar de nuevo.
-NO hagas análisis psicológicos largos.
-"""
-        
-        return texto
+        return f"{contexto}\nUsuario: {texto}\nResponde brevemente y usa comandos [ACCION] cuando corresponda."
     
     def _procesar_comandos_ia(self, respuesta, texto):
-        """Ejecuta comandos (Lógica de control)"""
+        """Ejecuta comandos - SIMPLIFICADO porque ahora el fallback hace todo"""
+        # Esta función ahora es principalmente para cuando la IA responde
+        # pero el fallback ya maneja la mayoría de comandos
         
         if "[INICIAR]" in respuesta:
             self.fase = "registro"
-            print("   -> Fase: REGISTRO")
         
         elif "[REGISTRAR:" in respuesta:
             try:
-                # Extracción limpia del nombre
                 nombre = respuesta.split("[REGISTRAR:")[1].split("]")[0].strip()
-                
-                # Limpieza extra por si la IA alucina puntuación
                 nombre = nombre.replace(".", "").replace(",", "")
                 
                 if nombre and nombre not in self.jugadores:
                     self.jugadores.append(nombre)
                     self.generos[nombre] = self.detectar_genero(nombre)
-                    print(f"   [Sistema] Jugador registrado: {nombre}")
-                    
-                    if len(self.jugadores) >= 5:
-                        print("   -> Máximo alcanzado, iniciando...")
-                
             except Exception as e:
-                print(f"   Error registrando: {e}")
+                print(f"Error registrando: {e}")
         
         elif "[INICIAR_JUEGO]" in respuesta:
-            if len(self.jugadores) >= 3: # Bajé el mínimo a 3 para pruebas
+            if len(self.jugadores) >= 3 and self.fase != "mostrando_palabras":
                 self._iniciar_juego()
-            else:
-                print("   [Sistema] Faltan jugadores (mínimo 3).")
-        
-        elif "[JUGADOR_LISTO]" in respuesta:
-            if self.turno_actual < len(self.jugadores):
-                self.jugadores_listos.add(self.jugadores[self.turno_actual])
-                self.turno_actual += 1
-                
-                if len(self.jugadores_listos) >= len(self.jugadores):
-                    self.fase = "jugando"
-                    self.turno_actual = 0
-                    self.orden_turnos = list(range(len(self.jugadores)))
-                    random.shuffle(self.orden_turnos)
-                    print("   -> Fase: JUGANDO")
-
-        elif "[GUARDAR_PISTA]" in respuesta:
-            if self.turno_actual < len(self.orden_turnos):
-                idx = self.orden_turnos[self.turno_actual]
-                self.pistas_ronda.append(f"{self.jugadores[idx]}: {texto}")
-                self.turno_actual += 1
-                
-                if self.turno_actual >= len(self.jugadores):
-                    self.fase = "decision_ronda"
-                    print("   -> Fase: DECISIÓN")
-
-        elif "[NUEVA_RONDA]" in respuesta:
-            self.ronda_actual += 1
-            self.turno_actual = 0
-            self.pistas_ronda = []
-            self.fase = "jugando"
-            random.shuffle(self.orden_turnos)
-            print(f"   -> Nueva ronda #{self.ronda_actual + 1}")
-
-        elif "[INICIAR_VOTACION]" in respuesta:
-            self.fase = "votacion"
-            self.turno_actual = 0
-            print("   -> Fase: VOTACIÓN")
-
-        elif "[VOTAR:" in respuesta:
-            try:
-                votado = respuesta.split("[VOTAR:")[1].split("]")[0].strip()
-                # Búsqueda difusa simple para matchear nombre
-                nombre_real = next((j for j in self.jugadores if j.lower() == votado.lower()), None)
-                
-                if nombre_real:
-                    votante = self.jugadores[len(self.votos_impostor)]
-                    self.votos_impostor[votante] = nombre_real
-                    print(f"   [Sistema] Voto: {votante} -> {nombre_real}")
-                    
-                    if len(self.votos_impostor) >= len(self.jugadores):
-                        self._determinar_ganador()
-            except Exception as e:
-                print(f"   Error voto: {e}")
     
     def _iniciar_juego(self):
         """Configuración inicial del juego"""
+        if self.fase == "mostrando_palabras":
+            return  # Ya está iniciado
+            
         self.fase = "mostrando_palabras"
         self.palabra_secreta = random.choice(self.palabras_ecuador)
         self.impostor_index = random.randint(0, len(self.jugadores) - 1)
         self.jugadores_listos = set()
         self.turno_actual = 0
         
-        print(f"\n{'='*30}")
+        print(f"\n{'='*40}")
         print(f" INICIO DE PARTIDA")
-        print(f" Palabra: {self.palabra_secreta}")
-        print(f" Impostor: {self.jugadores[self.impostor_index]}")
-        print(f"{'='*30}\n")
+        print(f" Jugadores: {', '.join(self.jugadores)}")
+        print(f" Palabra secreta: {self.palabra_secreta}")
+        print(f" Impostor: {self.jugadores[self.impostor_index]} (índice {self.impostor_index})")
+        print(f"{'='*40}\n")
     
     def _determinar_ganador(self):
         """Cálculo de resultados"""
@@ -375,17 +345,21 @@ NO hagas análisis psicológicos largos.
         for votado in self.votos_impostor.values():
             conteo[votado] = conteo.get(votado, 0) + 1
         
-        if not conteo: return
+        if not conteo:
+            return
 
         mas_votado = max(conteo, key=conteo.get)
         impostor = self.jugadores[self.impostor_index]
         
         resultado = "Ganan los CIUDADANOS" if mas_votado == impostor else "Gana el IMPOSTOR"
+        print(f"\n[RESULTADO] {resultado}")
+        print(f"Más votado: {mas_votado} ({conteo[mas_votado]} votos)")
+        print(f"Impostor real: {impostor}\n")
+        
         self.historial_completo.append(f"RESULTADO: {resultado}. Impostor era {impostor}.")
     
     def obtener_info_ui(self):
         """Retorna estado para la interfaz"""
-        # (Lógica idéntica a tu original para mantener compatibilidad UI)
         info = {
             "fase": self.fase,
             "jugadores": self.jugadores,
@@ -395,7 +369,7 @@ NO hagas análisis psicológicos largos.
             "mostrando_a": None,
             "es_impostor": False,
             "palabra": None,
-            "listos": 0,
+            "listos": len(self.jugadores_listos),
             "total_jugadores": len(self.jugadores)
         }
         
@@ -403,7 +377,13 @@ NO hagas análisis psicológicos largos.
             info["mostrando_a"] = self.jugadores[self.turno_actual]
             info["es_impostor"] = (self.turno_actual == self.impostor_index)
             info["palabra"] = None if info["es_impostor"] else self.palabra_secreta
-            info["listos"] = len(self.jugadores_listos)
+            
+            print(f"\n[INFO UI] ============================")
+            print(f"  Mostrando a: {info['mostrando_a']} (turno {self.turno_actual})")
+            print(f"  Es impostor: {info['es_impostor']} (impostor_index={self.impostor_index})")
+            print(f"  Palabra: {info['palabra']}")
+            print(f"  Listos: {info['listos']}/{info['total_jugadores']}")
+            print(f"=============================\n")
         
         if self.fase == "jugando" and self.turno_actual < len(self.orden_turnos):
             idx = self.orden_turnos[self.turno_actual]
@@ -416,7 +396,6 @@ NO hagas análisis psicológicos largos.
                 
         return info
 
-# Bloque para probarlo en consola rápidamente
 if __name__ == "__main__":
     juego = AsistenteImpostor()
     print("--- CONSOLA DE PRUEBA ---")
