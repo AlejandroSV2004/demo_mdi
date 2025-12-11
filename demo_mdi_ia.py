@@ -14,7 +14,7 @@ class AsistenteImpostor:
         self.jugadores = []
         self.generos = {}
         self.fase = "inicio"
-        
+      
         # Palabras ecuatorianas
         self.palabras_ecuador = [
             "encebollado", "ceviche", "hornado", "guatita", "cuy", "bolon", 
@@ -101,7 +101,7 @@ PALABRAS PARA ADIVINAR:
         try:
             response = self.chat.send_message(prompt)
             respuesta_ia = response.text.strip()
-            
+        
             self._procesar_comandos_ia(respuesta_ia, texto_usuario)
             
             self.historial_completo.append(f"Jarvis: {respuesta_ia}")
