@@ -92,18 +92,24 @@ REGLAS DE INTERACCIÓN:
     
     def procesar_entrada(self, texto_usuario):
         """IA interpreta y decide"""
-        print(f"\n[PROCESANDO] Entrada: '{texto_usuario}' | Fase: {self.fase} | Turno: {self.turno_actual}")
+        print(f"\n{'='*60}")
+        print(f"[PROCESANDO] Entrada: '{texto_usuario}'")
+        print(f"[PROCESANDO] Fase actual: {self.fase}")
+        print(f"[PROCESANDO] Turno: {self.turno_actual}")
+        print(f"{'='*60}")
         
         self.historial_completo.append(f"Usuario: {texto_usuario}")
         
         # SIEMPRE intentar fallback primero
         respuesta_fallback = self._respuesta_fallback(texto_usuario)
         
-        # Si el fallback dio una respuesta válida, usarla
-        if respuesta_fallback and "[" in respuesta_fallback:
-            print(f"[FALLBACK] Respuesta: {respuesta_fallback}")
+        # Si el fallback dio una respuesta válida (con comando), usarla
+        if respuesta_fallback:
+            print(f"[FALLBACK USADO] Respuesta: {respuesta_fallback[:100]}...")
             self.historial_completo.append(f"Jarvis: {respuesta_fallback}")
             return respuesta_fallback
+        
+        print("[PROCESANDO] Fallback no manejó, intentando con IA...")
         
         # Solo usar IA para casos complejos
         contexto = self._construir_contexto()
@@ -117,14 +123,14 @@ REGLAS DE INTERACCIÓN:
             self._procesar_comandos_ia(respuesta_ia, texto_usuario)
             
             self.historial_completo.append(f"Jarvis: {respuesta_ia}")
+            print(f"[IA USADA] Respuesta: {respuesta_ia[:100]}...")
             return respuesta_ia
             
         except Exception as e:
             error_msg = str(e)
-            print(f"Error IA: {error_msg}")
+            print(f"[ERROR IA] {error_msg}")
             
             if "429" in error_msg or "quota" in error_msg.lower():
-                # Si hay error de cuota, usar fallback genérico
                 fallback_generico = self._respuesta_fallback_generica(texto_usuario)
                 return fallback_generico
             
@@ -248,7 +254,9 @@ REGLAS DE INTERACCIÓN:
         
         # === DECISIÓN RONDA ===
         if self.fase == "decision_ronda":
-            if any(palabra in texto_lower for palabra in ["otra", "más", "si", "sí", "continuar", "nueva"]):
+            print(f"[FALLBACK] En decisión_ronda, analizando: '{texto_lower}'")
+            
+            if any(palabra in texto_lower for palabra in ["otra", "más", "mas", "si", "sí", "continuar", "nueva", "ronda"]):
                 self.ronda_actual += 1
                 self.turno_actual = 0
                 self.pistas_ronda = []
@@ -256,32 +264,64 @@ REGLAS DE INTERACCIÓN:
                 random.shuffle(self.orden_turnos)
                 primer_idx = self.orden_turnos[0]
                 primer_jugador = self.jugadores[primer_idx]
+                print(f"[FALLBACK] -> NUEVA RONDA, primer jugador: {primer_jugador}")
                 return f"[NUEVA_RONDA] De acuerdo, nueva ronda de pistas. {primer_jugador}, comienza."
-            elif any(palabra in texto_lower for palabra in ["votar", "votación", "votacion", "ya", "no", "terminar"]):
+            elif any(palabra in texto_lower for palabra in ["votar", "votación", "votacion", "ya", "no", "terminar", "basta"]):
                 self.fase = "votacion"
+                self.turno_actual = 0
+                print(f"[FALLBACK] -> VOTACIÓN, primer votante: {self.jugadores[0]}")
                 return f"[INICIAR_VOTACION] Perfecto, iniciemos la votación. {self.jugadores[0]}, ¿a quién votas como impostor?"
-            return None
+            
+            # Si no detecta nada claro, asumir que quieren votar (para avanzar el juego)
+            print(f"[FALLBACK] No detectó opción clara, pasando a VOTACIÓN por defecto")
+            self.fase = "votacion"
+            self.turno_actual = 0
+            return f"[INICIAR_VOTACION] Entendido, pasemos a votar. {self.jugadores[0]}, ¿a quién votas?"
         
         # === VOTACIÓN ===
         if self.fase == "votacion":
+            print(f"[FALLBACK] En votación, texto: '{texto_lower}'")
+            print(f"[FALLBACK] Jugadores disponibles: {self.jugadores}")
+            
+            # Buscar nombre del votado
+            nombre_encontrado = None
             for jugador in self.jugadores:
                 if jugador.lower() in texto_lower:
-                    votante_idx = len(self.votos_impostor)
-                    if votante_idx < len(self.jugadores):
-                        votante = self.jugadores[votante_idx]
-                        self.votos_impostor[votante] = jugador
+                    nombre_encontrado = jugador
+                    break
+            
+            if nombre_encontrado:
+                votante_idx = len(self.votos_impostor)
+                if votante_idx < len(self.jugadores):
+                    votante = self.jugadores[votante_idx]
+                    self.votos_impostor[votante] = nombre_encontrado
+                    
+                    print(f"[FALLBACK] Voto registrado: {votante} -> {nombre_encontrado}")
+                    print(f"[FALLBACK] Votos actuales: {len(self.votos_impostor)}/{len(self.jugadores)}")
+                    
+                    if len(self.votos_impostor) >= len(self.jugadores):
+                        print("[FALLBACK] ¡VOTACIÓN COMPLETA! Determinando ganador...")
+                        self._determinar_ganador()
+                        impostor_real = self.jugadores[self.impostor_index]
                         
-                        print(f"[FALLBACK] Voto: {votante} -> {jugador}")
+                        # Contar votos
+                        conteo = {}
+                        for votado in self.votos_impostor.values():
+                            conteo[votado] = conteo.get(votado, 0) + 1
+                        mas_votado = max(conteo, key=conteo.get)
+                        votos_mas_votado = conteo[mas_votado]
                         
-                        if len(self.votos_impostor) >= len(self.jugadores):
-                            self._determinar_ganador()
-                            impostor_real = self.jugadores[self.impostor_index]
-                            return f"[VOTAR:{jugador}] Votación completa. El impostor era... ¡{impostor_real}!"
-                        
-                        siguiente_idx = len(self.votos_impostor)
-                        siguiente_votante = self.jugadores[siguiente_idx]
-                        return f"[VOTAR:{jugador}] Voto registrado. {siguiente_votante}, ¿a quién votas?"
-            return None
+                        if mas_votado == impostor_real:
+                            return f"[VOTAR:{nombre_encontrado}] Votación completa. ¡{mas_votado} recibió {votos_mas_votado} votos! El impostor era {impostor_real}. ¡GANAN LOS CIUDADANOS!"
+                        else:
+                            return f"[VOTAR:{nombre_encontrado}] Votación completa. {mas_votado} recibió {votos_mas_votado} votos, pero el impostor era {impostor_real}. ¡GANA EL IMPOSTOR!"
+                    
+                    siguiente_idx = len(self.votos_impostor)
+                    siguiente_votante = self.jugadores[siguiente_idx]
+                    return f"[VOTAR:{nombre_encontrado}] Voto registrado. {siguiente_votante}, ¿a quién votas?"
+            
+            print(f"[FALLBACK] No se detectó nombre válido en: '{texto_lower}'")
+            return "No detecté un nombre válido. Por favor, di el nombre del jugador que crees que es el impostor."
         
         return None
     

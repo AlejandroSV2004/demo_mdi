@@ -6,7 +6,8 @@ import numpy as np
 import pygame
 import json
 from vosk import Model, KaldiRecognizer
-from elevenlabs.client import ElevenLabs
+import edge_tts
+import asyncio
 import os
 import threading
 from dotenv import load_dotenv
@@ -42,16 +43,9 @@ class InterfazImpostor:
         except Exception as e:
             print(f"Error VOSK: {e}")
         
-        # ElevenLabs
-        api_key_eleven = os.environ.get("ELEVENLABS_API_KEY")
-        if not api_key_eleven:
-            print("ADVERTENCIA: No se encontró ELEVENLABS_API_KEY")
+        # Configuración Edge-TTS (No requiere API Key)
+        # Voz por defecto: es-EC-LuisNeural (Ecuatoriano)
         
-        try:
-            self.client_eleven = ElevenLabs(api_key=api_key_eleven)
-        except Exception as e:
-            print(f"Error ElevenLabs: {e}")
-
         # Pygame
         pygame.mixer.init()
         
@@ -312,8 +306,6 @@ class InterfazImpostor:
                 
         except Exception as e:
             print(f"Error Processing: {e}")
-            import traceback
-            traceback.print_exc()
             self.root.after(0, lambda: self.label_estado.config(text="Error interno"))
         finally:
             self.procesando = False
@@ -323,11 +315,9 @@ class InterfazImpostor:
         return re.sub(r'\[.*?\]', '', texto).strip()
     
     def actualizar_ui(self):
-        """Actualiza estado de botones - MEJORADO"""
+        """Actualiza estado de botones"""
         info = self.asistente.obtener_info_ui()
         fase = info["fase"]
-        
-        print(f"\n[UI UPDATE] Fase: {fase}, Turno: {info['turno']}")
         
         # Reset
         self.frame_palabra.pack_forget()
@@ -353,30 +343,32 @@ class InterfazImpostor:
                 self.frame_palabra.pack(pady=10)
                 self.btn_ver_palabra.config(state="normal")
                 self.btn_listo.config(state="disabled", cursor="arrow")
-                
-                print(f"[UI] Mostrando panel para: {mostrando}")
         
         elif fase == "jugando":
             jugador = info.get("jugador_actual", "")
-            self.label_estado.config(text=f"Turno de {jugador} - Da tu pista")
+            self.label_estado.config(text=f"Turno de {jugador} - Da tu pista (Grabar)")
         
         elif fase == "decision_ronda":
-            self.label_estado.config(text="¿Otra ronda o votar?")
+            self.label_estado.config(text="Di: 'Otra ronda' o 'Votar'")
         
         elif fase == "votacion":
             votante = info.get("jugador_actual", "")
-            self.label_estado.config(text=f"VOTACIÓN - {votante}, ¿a quién votas?")
+            if votante:
+                self.label_estado.config(text=f"VOTACIÓN - {votante}, di el nombre")
+            else:
+                self.label_estado.config(text="VOTACIÓN - Di el nombre del impostor")
             
         elif fase == "resultado":
-            self.label_estado.config(text="¡Juego terminado!")
+            self.label_estado.config(text="¡Juego terminado! Resultado mostrado")
+        
+        else:
+            self.label_estado.config(text=f"Fase: {fase} - Esperando...")
     
     def revelar_palabra_animada(self):
         """Muestra la palabra reemplazando la imagen"""
         info = self.asistente.obtener_info_ui()
         es_impostor = info.get("es_impostor", False)
         palabra = info.get("palabra")
-        
-        print(f"\n[REVELAR] Es impostor: {es_impostor}, Palabra: {palabra}")
         
         # Definir texto y color
         if es_impostor:
@@ -406,8 +398,6 @@ class InterfazImpostor:
 
     def restaurar_imagen_y_habilitar_listo(self):
         """Restaura la imagen y habilita botón Listo"""
-        print("[UI] Restaurando imagen y habilitando LISTO")
-        
         # Restaurar imagen
         self.label_central.config(image=self.img_ia, text="")
         
@@ -416,9 +406,7 @@ class InterfazImpostor:
         self.label_estado.config(text="Presiona LISTO cuando estés listo")
 
     def marcar_listo(self):
-        """Acción del botón Listo - CRÍTICO"""
-        print("\n[MARCAR LISTO] Botón presionado")
-        
+        """Acción del botón Listo"""
         # Deshabilitar inmediatamente para evitar doble click
         self.btn_listo.config(state="disabled", cursor="arrow")
         self.label_estado.config(text="Procesando...")
@@ -429,13 +417,9 @@ class InterfazImpostor:
     def _marcar_listo_thread(self):
         """Procesa el comando Listo"""
         try:
-            print("[LISTO THREAD] Enviando 'listo' al asistente")
-            
             # Enviar comando al asistente
             respuesta = self.asistente.procesar_entrada("listo")
             respuesta_limpia = self.limpiar_comandos(respuesta)
-            
-            print(f"[LISTO THREAD] Respuesta: {respuesta_limpia}")
             
             # Mostrar en UI
             self.root.after(0, lambda: self.agregar_mensaje_app(respuesta_limpia))
@@ -447,27 +431,32 @@ class InterfazImpostor:
             self.root.after(0, self.actualizar_ui)
             
         except Exception as e:
-            print(f"[ERROR LISTO] {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error listo: {e}")
             self.root.after(0, lambda: self.label_estado.config(text="Error al procesar"))
     
+    # --- EDGE TTS ASYNC WRAPPER ---
+    async def generar_audio_edge(self, text, output_file):
+        """Genera audio con voz ecuatoriana usando Edge-TTS"""
+        voice = "es-EC-LuisNeural" 
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(output_file)
+
     def texto_a_voz(self, text):
-        """TTS ElevenLabs"""
+        """TTS Edge-TTS (ejecutado en hilo separado)"""
         try:
             self.root.after(0, lambda: self.label_estado.config(text="Jarvis hablando..."))
             
-            audio_gen = self.client_eleven.text_to_speech.convert(
-                voice_id="pNInz6obpgDQGcFmaJgB",
-                model_id="eleven_multilingual_v2",
-                text=text
-            )
-            
-            audio_bytes = b"".join(audio_gen)
-            
             archivo_audio = "temp_jarvis.mp3"
-            with open(archivo_audio, "wb") as f:
-                f.write(audio_bytes)
+            
+            # Limpiar archivo previo
+            if os.path.exists(archivo_audio):
+                try:
+                    os.remove(archivo_audio)
+                except:
+                    pass
+
+            # Ejecutar Edge-TTS de manera síncrona dentro del hilo
+            asyncio.run(self.generar_audio_edge(text, archivo_audio))
             
             pygame.mixer.music.load(archivo_audio)
             pygame.mixer.music.play()
@@ -480,12 +469,8 @@ class InterfazImpostor:
             self.root.after(0, lambda: self.label_estado.config(text="Listo para continuar"))
             
         except Exception as e:
-            error_msg = str(e)
             print(f"Error TTS: {e}")
-            msg_error = "Error en audio"
-            if "401" in error_msg or "quota" in error_msg.lower():
-                msg_error = "Sin créditos ElevenLabs"
-            self.root.after(0, lambda: self.label_estado.config(text=msg_error))
+            self.root.after(0, lambda: self.label_estado.config(text="Error en audio"))
 
 def main():
     root = tk.Tk()
