@@ -6,8 +6,9 @@ import numpy as np
 import pygame
 import json
 from vosk import Model, KaldiRecognizer
-from elevenlabs.client import ElevenLabs
+from elevenlabs.client import ElevenLabs  # Volvemos a ElevenLabs
 import os
+import threading
 from dotenv import load_dotenv
 from demo_mdi_ia import AsistenteImpostor
 import re
@@ -24,24 +25,35 @@ class InterfazImpostor:
         # Asistente
         self.asistente = AsistenteImpostor()
         
-        # Audio
+        # Audio config
         self.fs = 44100
         self.grabando = False
         self.buffer = []
         self.stream = None
+        self.procesando = False 
         
         # VOSK
         print("Cargando VOSK...")
         try:
+            if not os.path.exists("model"):
+                print("ERROR: No se encuentra la carpeta 'model'.")
+                print("Descarga el modelo de: https://alphacephei.com/vosk/models")
             self.vosk_model = Model("model")
             self.rec_vosk = KaldiRecognizer(self.vosk_model, self.fs)
         except Exception as e:
             print(f"Error VOSK: {e}")
-            exit()
         
-        # ElevenLabs
+        # ElevenLabs Init
         api_key_eleven = os.environ.get("ELEVENLABS_API_KEY")
-        self.client_eleven = ElevenLabs(api_key=api_key_eleven)
+        if not api_key_eleven:
+            print("ADVERTENCIA: No se encontro ELEVENLABS_API_KEY en .env")
+        
+        try:
+            self.client_eleven = ElevenLabs(api_key=api_key_eleven)
+        except Exception as e:
+            print(f"Error al iniciar ElevenLabs: {e}")
+
+        # Pygame Mixer
         pygame.mixer.init()
         
         # Cargar imagen IA
@@ -50,64 +62,57 @@ class InterfazImpostor:
         # Crear interfaz
         self.crear_interfaz()
         
-        # Saludo inicial
-        self.root.after(800, self.saludo_inicial)
+        # Saludo inicial (con retraso)
+        self.root.after(1000, self.saludo_inicial)
     
     def cargar_imagen_ia(self):
-        """Carga imagen ia.png"""
+        """Carga imagen ia.png o crea un fallback"""
         try:
             img = Image.open("images/ia.png").resize((180, 180), Image.Resampling.LANCZOS)
             self.img_ia = ImageTk.PhotoImage(img)
-            print("Imagen IA cargada correctamente")
         except Exception as e:
-            print(f"Error cargando ia.png: {e}")
-            # Crear circulo azul como fallback
+            print(f"Aviso: Usando imagen generada (Error: {e})")
             size = 180
             img = Image.new('RGBA', (size, size), (255, 255, 255, 0))
             draw = ImageDraw.Draw(img)
-            for i in range(size//2):
-                r = int(0 + (100 * i / (size//2)))
-                g = int(100 + (150 * i / (size//2)))
-                b = int(255)
-                draw.ellipse([i, i, size-i, size-i], fill=(r, g, b, 255))
+            draw.ellipse([0, 0, size, size], fill=(77, 144, 254, 255)) # Azul Google
             self.img_ia = ImageTk.PhotoImage(img)
     
     def crear_interfaz(self):
-        """Crea UI limpia y moderna"""
+        """Crea UI limpia y moderna sin emojis"""
         # Fuentes
         font_texto = tkfont.Font(family="Segoe UI", size=14)
         font_texto_app = tkfont.Font(family="Segoe UI", size=14)
-        font_btn = tkfont.Font(family="Segoe UI", size=13)
+        font_btn = tkfont.Font(family="Segoe UI", size=13, weight="bold")
         font_palabra = tkfont.Font(family="Segoe UI", size=24, weight="bold")
         
         # Espacio superior
-        tk.Frame(self.root, bg="#FFFFFF", height=40).pack()
+        tk.Frame(self.root, bg="#FFFFFF", height=20).pack()
         
         # Circulo IA
         self.label_imagen = tk.Label(self.root, bg="#FFFFFF", image=self.img_ia)
-        self.label_imagen.pack(pady=20)
+        self.label_imagen.pack(pady=10)
         
         # Conversacion
         frame_conv = tk.Frame(self.root, bg="#FFFFFF")
-        frame_conv.pack(pady=20, padx=60, fill="both", expand=True)
+        frame_conv.pack(pady=10, padx=60, fill="both", expand=True)
         
         self.texto_conv = tk.Text(
             frame_conv,
             font=font_texto,
-            bg="#FFFFFF",
+            bg="#F8F9FA",
             fg="#333333",
             wrap="word",
             height=10,
             relief="flat",
-            bd=0,
+            bd=10,
             highlightthickness=0,
             insertbackground="#0064FF"
         )
         self.texto_conv.pack(fill="both", expand=True)
         self.texto_conv.config(state="disabled")
         
-        # Configurar tags para colores
-        self.texto_conv.tag_config("app", foreground="#4D90FE", font=font_texto_app)
+        self.texto_conv.tag_config("app", foreground="#0064FF", font=font_texto_app)
         self.texto_conv.tag_config("user", foreground="#333333", font=font_texto)
         
         # Frame mostrar palabra (oculto inicialmente)
@@ -129,17 +134,14 @@ class InterfazImpostor:
             bg="#FFFFFF",
             fg="#0064FF",
             activebackground="#F0F0F0",
-            activeforeground="#0064FF",
             command=self.revelar_palabra,
             relief="flat",
-            bd=0,
-            padx=25,
-            pady=12,
-            cursor="hand2",
-            highlightthickness=0
+            bd=1,
+            padx=20,
+            pady=10,
+            cursor="hand2"
         )
-        self.btn_ver_palabra.pack(pady=8)
-        self._add_button_shadow(self.btn_ver_palabra)
+        self.btn_ver_palabra.pack(pady=5)
         
         self.label_palabra_revelada = tk.Label(
             self.frame_palabra,
@@ -151,79 +153,72 @@ class InterfazImpostor:
         
         # Controles inferiores
         frame_ctrl = tk.Frame(self.root, bg="#FFFFFF")
-        frame_ctrl.pack(pady=30)
+        frame_ctrl.pack(pady=20, fill="x")
+        
+        # Contenedor para centrar botones
+        frame_botones = tk.Frame(frame_ctrl, bg="#FFFFFF")
+        frame_botones.pack()
         
         self.btn_grabar = tk.Button(
-            frame_ctrl,
-            text="Grabar",
+            frame_botones,
+            text="MANTEN PARA HABLAR",
             font=font_btn,
             bg="#FFFFFF",
-            fg="#0064FF",
-            activebackground="#F0F0F0",
-            activeforeground="#0064FF",
-            relief="flat",
-            bd=0,
-            padx=40,
+            fg="#D93025", # Rojo Google
+            activebackground="#FCE8E6",
+            activeforeground="#D93025",
+            relief="solid",
+            bd=1,
+            padx=30,
             pady=15,
-            cursor="hand2",
-            highlightthickness=0
+            cursor="hand2"
         )
-        self.btn_grabar.pack(side="left", padx=15)
+        self.btn_grabar.pack(side="left", padx=20)
+        
+        # Bindings
         self.btn_grabar.bind("<ButtonPress-1>", self.iniciar_grabacion)
         self.btn_grabar.bind("<ButtonRelease-1>", self.detener_grabacion)
-        self._add_button_shadow(self.btn_grabar)
         
         self.btn_listo = tk.Button(
-            frame_ctrl,
-            text="Listo",
+            frame_botones,
+            text="LISTO",
             font=font_btn,
             bg="#FFFFFF",
-            fg="#0064FF",
-            activebackground="#F0F0F0",
-            activeforeground="#0064FF",
+            fg="#1E8E3E", # Verde Google
+            activebackground="#E6F4EA",
+            activeforeground="#1E8E3E",
             command=self.marcar_listo,
-            relief="flat",
-            bd=0,
-            padx=40,
+            relief="solid",
+            bd=1,
+            padx=30,
             pady=15,
             state="disabled",
-            cursor="hand2",
-            highlightthickness=0
+            cursor="arrow"
         )
-        self.btn_listo.pack(side="left", padx=15)
-        self._add_button_shadow(self.btn_listo)
+        self.btn_listo.pack(side="left", padx=20)
         
         # Estado
         self.label_estado = tk.Label(
             self.root,
             text="Inicializando sistema...",
-            font=tkfont.Font(family="Segoe UI", size=11),
+            font=tkfont.Font(family="Segoe UI", size=11, slant="italic"),
             fg="#999999",
             bg="#FFFFFF"
         )
-        self.label_estado.pack(pady=15)
-    
-    def _add_button_shadow(self, button):
-        """Agrega efecto de sombra al boton"""
-        def on_enter(e):
-            button.config(bg="#F5F8FF")
-        
-        def on_leave(e):
-            if button['state'] != 'disabled':
-                button.config(bg="#FFFFFF")
-        
-        button.bind("<Enter>", on_enter)
-        button.bind("<Leave>", on_leave)
+        self.label_estado.pack(pady=10)
     
     def saludo_inicial(self):
-        """Saludo"""
-        msg = "Hola! Soy Jarvis. Vamos a jugar al Impostor ecuatoriano. Cuando esten listos, presionen el boton del microfono y diganme."
-        self.agregar_mensaje_app(msg)
+        """Saludo en un hilo separado"""
+        threading.Thread(target=self._saludo_thread).start()
+
+    def _saludo_thread(self):
+        msg = "Hola! Soy Jarvis. Presiona el boton rojo y di 'Hola' para comenzar."
+        self.root.after(0, lambda: self.agregar_mensaje_app(msg))
+        self.root.after(0, lambda: self.label_estado.config(text="Esperando voz..."))
         self.texto_a_voz(msg)
-        self.label_estado.config(text="Esperando que inicien el juego...")
     
+    # --- GUI UPDATES (Thread Safe) ---
     def agregar_mensaje_app(self, texto):
-        """Agrega mensaje de la app con prefijo >"""
         self.texto_conv.config(state="normal")
         self.texto_conv.insert("end", "> ", "app")
         self.texto_conv.insert("end", texto + "\n\n", "app")
@@ -231,62 +226,68 @@ class InterfazImpostor:
         self.texto_conv.config(state="disabled")
     
     def agregar_mensaje_usuario(self, nombre, texto):
-        """Agrega mensaje del usuario con prefijo >"""
         self.texto_conv.config(state="normal")
         self.texto_conv.insert("end", f"> {nombre}: ", "user")
         self.texto_conv.insert("end", texto + "\n\n", "user")
         self.texto_conv.see("end")
         self.texto_conv.config(state="disabled")
     
+    # --- AUDIO LOGIC ---
     def iniciar_grabacion(self, event):
-        """Inicia grabacion"""
-        if not self.grabando:
-            self.grabando = True
-            self.buffer = []
-            self.btn_grabar.config(
-                text="Grabando...",
-                fg="#FF0000"
-            )
-            self.label_estado.config(text="Escuchando...")
-            
-            self.stream = sd.InputStream(
-                callback=self.audio_callback,
-                channels=1,
-                samplerate=self.fs
-            )
-            self.stream.start()
+        if not self.grabando and not self.procesando:
+            try:
+                self.grabando = True
+                self.buffer = []
+                self.btn_grabar.config(text="ESCUCHANDO...", bg="#FCE8E6", fg="#D93025")
+                self.label_estado.config(text="Escuchando...")
+                
+                # Iniciar stream
+                self.stream = sd.InputStream(
+                    callback=self.audio_callback,
+                    channels=1,
+                    samplerate=self.fs,
+                    blocksize=4000
+                )
+                self.stream.start()
+            except Exception as e:
+                print(f"Error Mic: {e}")
+                self.grabando = False
+                self.label_estado.config(text="Error de microfono")
     
     def detener_grabacion(self, event):
-        """Detiene y procesa"""
         if self.grabando:
             self.grabando = False
-            self.btn_grabar.config(
-                text="Grabar",
-                fg="#0064FF"
-            )
-            self.label_estado.config(text="Procesando audio...")
+            self.btn_grabar.config(text="MANTEN PARA HABLAR", bg="#FFFFFF", fg="#D93025")
+            self.label_estado.config(text="Procesando...")
             
             if self.stream:
-                self.stream.stop()
-                self.stream.close()
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                except:
+                    pass
             
+            # Usar Threading para no congelar
             if len(self.buffer) > 0:
-                self.root.after(100, self.procesar_audio)
+                self.procesando = True
+                threading.Thread(target=self._procesar_audio_thread).start()
+            else:
+                self.label_estado.config(text="Audio muy corto")
     
     def audio_callback(self, indata, frames, time, status):
-        """Callback audio"""
         if status:
             print(status)
         self.buffer.append(indata.copy())
     
-    def procesar_audio(self):
-        """Transcribe y procesa"""
+    def _procesar_audio_thread(self):
+        """Lógica pesada en hilo secundario"""
         try:
             # Transcribir VOSK
             datos = np.concatenate(self.buffer, axis=0)
             audio_int16 = (datos * 32767).astype(np.int16)
             audio_bytes = audio_int16.tobytes()
             
+            texto = ""
             if self.rec_vosk.AcceptWaveform(audio_bytes):
                 resultado = json.loads(self.rec_vosk.Result())
                 texto = resultado.get("text", "")
@@ -295,124 +296,115 @@ class InterfazImpostor:
                 texto = resultado.get("text", "")
             
             if texto and len(texto) > 2:
-                # Determinar hablante
+                # 1. Mostrar usuario
                 info = self.asistente.obtener_info_ui()
+                nombre = info.get("jugador_actual") or info.get("mostrando_a") or "Usuario"
+                self.root.after(0, lambda: self.agregar_mensaje_usuario(nombre, texto))
+                self.root.after(0, lambda: self.label_estado.config(text="Pensando..."))
                 
-                if info.get("jugador_actual"):
-                    nombre = info["jugador_actual"]
-                elif info["fase"] == "mostrando_palabras" and info.get("mostrando_a"):
-                    nombre = info["mostrando_a"]
-                else:
-                    nombre = "Usuario"
-                
-                # Mostrar lo dicho
-                self.agregar_mensaje_usuario(nombre, texto)
-                
-                # Procesar con IA
-                self.label_estado.config(text="Jarvis esta pensando...")
-                self.root.update()
-                
+                # 2. Llamar IA
                 respuesta = self.asistente.procesar_entrada(texto)
                 respuesta_limpia = self.limpiar_comandos(respuesta)
                 
-                # Mostrar respuesta
-                self.agregar_mensaje_app(respuesta_limpia)
+                # 3. Mostrar respuesta IA
+                self.root.after(0, lambda: self.agregar_mensaje_app(respuesta_limpia))
+                self.root.after(0, lambda: self.label_estado.config(text="Hablando..."))
+                
+                # 4. Hablar (ElevenLabs)
                 self.texto_a_voz(respuesta_limpia)
                 
-                # Actualizar UI
-                self.actualizar_ui()
+                # 5. Actualizar UI final
+                self.root.after(0, self.actualizar_ui)
+                
             else:
-                self.label_estado.config(text="No se escucho nada claro")
+                self.root.after(0, lambda: self.label_estado.config(text="No entendi, intenta de nuevo"))
                 
         except Exception as e:
-            print(f"Error: {e}")
-            self.label_estado.config(text="Error al procesar")
-    
+            print(f"Error Processing: {e}")
+            self.root.after(0, lambda: self.label_estado.config(text="Error interno"))
+        finally:
+            self.procesando = False
+            self.root.after(0, lambda: self.label_estado.config(text="Esperando..."))
+
     def limpiar_comandos(self, texto):
-        """Quita [COMANDOS]"""
         return re.sub(r'\[.*?\]', '', texto).strip()
     
     def actualizar_ui(self):
-        """Actualiza UI segun fase"""
+        """Actualiza estado de botones"""
         info = self.asistente.obtener_info_ui()
         fase = info["fase"]
         
+        # Resetear visuales comunes
+        self.frame_palabra.pack_forget()
+        self.btn_listo.config(state="disabled", cursor="arrow")
+        
         if fase == "inicio":
-            self.label_estado.config(text="Esperando iniciar...")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
-            self.frame_palabra.pack_forget()
+            self.label_estado.config(text="Presiona Grabar y di 'Comenzar'")
         
         elif fase == "registro":
             n = len(info['jugadores'])
-            self.label_estado.config(text=f"Registro: {n}/5 jugadores")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
-            self.frame_palabra.pack_forget()
+            self.label_estado.config(text=f"Registro: {n}/5 jugadores (Di tu nombre)")
         
         elif fase == "mostrando_palabras":
             mostrando = info.get("mostrando_a")
             if mostrando:
-                self.label_estado.config(text=f"{mostrando} debe ver su palabra/rol")
-                self.label_info_palabra.config(text=f"{mostrando}, haz clic para ver:")
-                self.frame_palabra.pack(pady=12)
-                self.btn_ver_palabra.config(state="normal", fg="#0064FF")
-                self.btn_listo.config(state="normal", fg="#0064FF")
+                self.label_estado.config(text=f"Turno de {mostrando}")
+                self.label_info_palabra.config(text=f"{mostrando}, mira tu rol:")
+                self.frame_palabra.pack(pady=10)
+                
+                self.btn_ver_palabra.config(state="normal")
                 self.label_palabra_revelada.pack_forget()
+                
+                self.btn_listo.config(state="normal", cursor="hand2")
         
         elif fase == "jugando":
             jugador = info.get("jugador_actual", "")
-            self.label_estado.config(text=f"Turno de {jugador} - Da tu pista")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
-            self.frame_palabra.pack_forget()
+            self.label_estado.config(text=f"Turno de {jugador} - Di tu pista")
         
         elif fase == "decision_ronda":
-            self.label_estado.config(text="Otra ronda o votar al impostor?")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
+            self.label_estado.config(text="Otra ronda o votar?")
         
         elif fase == "votacion":
-            self.label_estado.config(text="VOTACION - Quien es el impostor?")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
-        
+            self.label_estado.config(text="VOTACION - Di un nombre")
+            
         elif fase == "resultado":
             self.label_estado.config(text="Juego terminado!")
-            self.btn_listo.config(state="disabled", fg="#CCCCCC")
     
     def revelar_palabra(self):
-        """Revela palabra/rol"""
         info = self.asistente.obtener_info_ui()
+        es_impostor = info.get("es_impostor", False)
+        palabra = info.get("palabra")
         
-        if info["fase"] == "mostrando_palabras":
-            es_impostor = info.get("es_impostor", False)
-            palabra = info.get("palabra")
-            
-            if es_impostor:
-                self.label_palabra_revelada.config(
-                    text="ERES EL IMPOSTOR",
-                    fg="#FF0000"
-                )
-            else:
-                self.label_palabra_revelada.config(
-                    text=f"{palabra.upper()}",
-                    fg="#00AA00"
-                )
-            
-            self.label_palabra_revelada.pack(pady=15)
-            self.btn_ver_palabra.config(state="disabled", fg="#CCCCCC")
+        if es_impostor:
+            self.label_palabra_revelada.config(text="ERES EL IMPOSTOR", fg="#D93025")
+        else:
+            self.label_palabra_revelada.config(text=f"{palabra.upper()}", fg="#1E8E3E")
+        
+        self.label_palabra_revelada.pack(pady=10)
+        self.btn_ver_palabra.config(state="disabled")
     
     def marcar_listo(self):
-        """Boton listo"""
+        """Acción del botón Listo"""
+        self.btn_listo.config(state="disabled")
+        threading.Thread(target=self._marcar_listo_thread).start()
+
+    def _marcar_listo_thread(self):
         respuesta = self.asistente.procesar_entrada("listo ya vi")
         respuesta_limpia = self.limpiar_comandos(respuesta)
         
-        self.agregar_mensaje_app(respuesta_limpia)
+        self.root.after(0, lambda: self.agregar_mensaje_app(respuesta_limpia))
         self.texto_a_voz(respuesta_limpia)
-        self.actualizar_ui()
+        self.root.after(0, self.actualizar_ui)
     
     def texto_a_voz(self, text):
-        """TTS ElevenLabs"""
+        """TTS ElevenLabs (Sincrono, ejecutado en hilo separado)"""
+        # IMPORTANTE: Esta funcion se llama desde hilos secundarios (_procesar_audio_thread o _marcar_listo_thread)
+        # por lo que las operaciones lentas aqui no congelan la UI.
         try:
-            self.label_estado.config(text="Jarvis hablando...")
-            self.root.update()
+            # Notificar en UI que empieza a hablar
+            self.root.after(0, lambda: self.label_estado.config(text="Jarvis hablando..."))
             
+            # Generar audio con ElevenLabs
             audio_gen = self.client_eleven.text_to_speech.convert(
                 voice_id="pNInz6obpgDQGcFmaJgB",
                 model_id="eleven_multilingual_v2",
@@ -420,22 +412,33 @@ class InterfazImpostor:
             )
             
             audio_bytes = b"".join(audio_gen)
-            with open("temp_jarvis.mp3", "wb") as f:
+            
+            # Guardar archivo temporal
+            archivo_audio = "temp_jarvis.mp3"
+            with open(archivo_audio, "wb") as f:
                 f.write(audio_bytes)
             
-            pygame.mixer.music.load("temp_jarvis.mp3")
+            # Reproducir
+            pygame.mixer.music.load(archivo_audio)
             pygame.mixer.music.play()
             
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
-                self.root.update()
             
             pygame.mixer.music.unload()
-            self.label_estado.config(text="Listo para continuar")
+            
+            # Notificar fin
+            self.root.after(0, lambda: self.label_estado.config(text="Listo para continuar"))
             
         except Exception as e:
-            print(f"Error TTS: {e}")
-            self.label_estado.config(text="Error en audio")
+            error_msg = str(e)
+            print(f"Error TTS ElevenLabs: {e}")
+            
+            msg_error = "Error en audio"
+            if "401" in error_msg or "quota" in error_msg.lower():
+                msg_error = "Sin creditos ElevenLabs"
+                
+            self.root.after(0, lambda: self.label_estado.config(text=msg_error))
 
 def main():
     root = tk.Tk()

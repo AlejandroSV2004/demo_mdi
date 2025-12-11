@@ -10,7 +10,7 @@ El asistente funciona mediante cuatro módulos principales:
    Usa **Vosk** para transcribir tu voz en tiempo real directamente en tu PC, sin necesidad de internet.
 
 2. **Cerebro (Nube):**  
-   Envía la transcripción a **Google Gemini 1.5 Flash**, donde se genera la respuesta inteligente.
+   Envía la transcripción a **Google Gemini 2.5 pro**, donde se genera la respuesta inteligente.
 
 3. **Voz (Nube):**  
    Convierte la respuesta de texto en audio utilizando **ElevenLabs** (voz “Adam”).
@@ -25,7 +25,7 @@ El asistente funciona mediante cuatro módulos principales:
 Instala todas las librerías necesarias con el siguiente comando:
 
 ```bash
-pip install sounddevice numpy scipy keyboard google-generativeai elevenlabs python-dotenv pygame vosk pillow
+pip install sounddevice numpy scipy keyboard google-generativeai python-dotenv edge-tts pygame vosk pillow
 ````
 
 ---
