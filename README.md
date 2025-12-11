@@ -26,7 +26,7 @@ El asistente funciona mediante cuatro módulos principales:
 Instala todas las librerías necesarias con el siguiente comando:
 
 ```bash
-pip install sounddevice numpy scipy keyboard google-generativeai elevenlabs python-dotenv pygame vosk
+pip install sounddevice numpy scipy keyboard google-generativeai elevenlabs python-dotenv pygame vosk pillow
 ````
 
 ---
