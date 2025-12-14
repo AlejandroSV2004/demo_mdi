@@ -43,9 +43,6 @@ class InterfazImpostor:
         except Exception as e:
             print(f"Error VOSK: {e}")
         
-        # Configuración Edge-TTS (No requiere API Key)
-        # Voz por defecto: es-EC-LuisNeural (Ecuatoriano)
-        
         # Pygame
         pygame.mixer.init()
         
@@ -78,12 +75,13 @@ class InterfazImpostor:
         self.font_texto_app = tkfont.Font(family="Segoe UI", size=14)
         self.font_btn = tkfont.Font(family="Segoe UI", size=13, weight="bold")
         self.font_palabra_gigante = tkfont.Font(family="Segoe UI", size=40, weight="bold")
+        self.font_pregunta = tkfont.Font(family="Segoe UI", size=18, weight="bold")
         self.font_estado = tkfont.Font(family="Segoe UI", size=11, slant="italic")
         
         # Espacio superior
         tk.Frame(self.root, bg="#FFFFFF", height=20).pack()
         
-        # Label central (imagen o palabra)
+        # Label central (imagen, palabra o preguntas)
         self.label_central = tk.Label(
             self.root, 
             bg="#FFFFFF", 
@@ -91,6 +89,9 @@ class InterfazImpostor:
             compound="center"
         )
         self.label_central.pack(pady=10)
+        
+        # Frame para preguntas (oculto inicialmente)
+        self.frame_preguntas = tk.Frame(self.root, bg="#FFFFFF")
         
         # Conversación
         frame_conv = tk.Frame(self.root, bg="#FFFFFF")
@@ -201,7 +202,7 @@ class InterfazImpostor:
         threading.Thread(target=self._saludo_thread, daemon=True).start()
 
     def _saludo_thread(self):
-        msg = "Hola! Soy Jarvis. Presiona el botón rojo y di 'Hola' para comenzar."
+        msg = "Hola! Soy Jarvis, seré el mediador de este juego. Presiona el botón rojo cuando haya terminado de hablar para poder conversar conmigo y que una persona diga literalmente sólo la palabra 'Hola' para comenzar el juego."
         self.root.after(0, lambda: self.agregar_mensaje_app(msg))
         self.root.after(0, lambda: self.label_estado.config(text="Esperando voz..."))
         self.texto_a_voz(msg)
@@ -314,6 +315,50 @@ class InterfazImpostor:
     def limpiar_comandos(self, texto):
         return re.sub(r'\[.*?\]', '', texto).strip()
     
+    def mostrar_preguntas(self, preguntas, preguntador, respondedor):
+        """Muestra las preguntas en pantalla"""
+        # Limpiar frame
+        for widget in self.frame_preguntas.winfo_children():
+            widget.destroy()
+        
+        # Título
+        titulo = tk.Label(
+            self.frame_preguntas,
+            text=f"{preguntador}, elige una pregunta para {respondedor}:",
+            font=tkfont.Font(family="Segoe UI", size=16, weight="bold"),
+            fg="#0064FF",
+            bg="#FFFFFF"
+        )
+        titulo.pack(pady=10)
+        
+        # Preguntas
+        for i, pregunta in enumerate(preguntas, 1):
+            label_pregunta = tk.Label(
+                self.frame_preguntas,
+                text=f"{i}. {pregunta}",
+                font=self.font_pregunta,
+                fg="#333333",
+                bg="#F8F9FA",
+                padx=20,
+                pady=15,
+                relief="solid",
+                bd=1
+            )
+            label_pregunta.pack(pady=5, fill="x", padx=40)
+        
+        # Instrucción
+        instruccion = tk.Label(
+            self.frame_preguntas,
+            text=f"Escoge la pregunta y luego pregúntasela a {respondedor}. Di un resumen de lo que responda.",
+            font=tkfont.Font(family="Segoe UI", size=12, slant="italic"),
+            fg="#666666",
+            bg="#FFFFFF"
+        )
+        instruccion.pack(pady=10)
+        
+        # Mostrar frame
+        self.frame_preguntas.pack(pady=10, fill="x")
+    
     def actualizar_ui(self):
         """Actualiza estado de botones"""
         info = self.asistente.obtener_info_ui()
@@ -321,6 +366,7 @@ class InterfazImpostor:
         
         # Reset
         self.frame_palabra.pack_forget()
+        self.frame_preguntas.pack_forget()
         self.btn_listo.config(state="disabled", cursor="arrow")
         self.btn_ver_palabra.config(state="normal")
         
@@ -357,6 +403,18 @@ class InterfazImpostor:
                 self.label_estado.config(text=f"VOTACIÓN - {votante}, di el nombre")
             else:
                 self.label_estado.config(text="VOTACIÓN - Di el nombre del impostor")
+        
+        elif fase == "pregunta_final":
+            # Mostrar preguntas en pantalla
+            preguntador = info.get("preguntador")
+            respondedor = info.get("respondedor")
+            preguntas = info.get("preguntas", [])
+            
+            if preguntador and respondedor and preguntas:
+                self.mostrar_preguntas(preguntas, preguntador, respondedor)
+                self.label_estado.config(text=f"{preguntador}, elige y pregunta a {respondedor}")
+            else:
+                self.label_estado.config(text="Preparando dinámica final...")
             
         elif fase == "resultado":
             self.label_estado.config(text="¡Juego terminado! Resultado mostrado")

@@ -18,10 +18,68 @@ class AsistenteImpostor:
       
         # Palabras ecuatorianas
         self.palabras_ecuador = [
-            "encebollado", "ceviche", "hornado", "guatita", "cuy", "bolon", 
-            "corvina", "empanada", "humita", "bollo", "fritada", "salchipapa",
-            "Galapagos", "Quito", "Montanita", "Cuenca", "Guayaquil",
-            "guambra", "fuego", "morocho", "sabido", "chuchaqui"
+            # Comida
+            "pizza", "hamburguesa", "pasta", "sushi", "chocolate", "helado", "pan",
+            "arroz", "pollo", "café", "taco", "papas fritas",
+
+            # Bebidas
+            "agua", "coca cola", "cerveza", "vino", "jugo", "té",
+
+            # Películas
+            "Titanic", "Avatar", "Harry Potter", "Star Wars", "El Rey León",
+            "Jurassic Park", "Matrix", "Avengers",
+
+            # Actores y actrices famosos
+            "Leonardo DiCaprio", "Brad Pitt", "Tom Cruise", "Johnny Depp",
+            "Scarlett Johansson", "Jennifer Lopez", "Will Smith",
+
+            # Series
+            "Friends", "Breaking Bad", "La Casa de Papel", "Los Simpson", "Rick and Morty", 
+
+            # Países
+            "Estados Unidos", "España", "México", "Brasil", "Francia",
+            "Italia", "Japón", "China", "Argentina",
+
+            # Ciudades y lugares famosos
+            "Nueva York", "París", "Roma", "Tokio", "Londres",
+            "Torre Eiffel", "Estatua de la Libertad", "Coliseo Romano",
+
+            # Objetos cotidianos
+            "celular", "computadora", "televisión", "reloj", "audífonos",
+            "mochila", "libro",
+
+            # Animales
+            "perro", "gato", "león", "tigre", "elefante", "delfín",
+
+            # Deportes
+            "fútbol", "baloncesto", "tenis", "natación", "ciclismo",
+
+            # Música
+            "Michael Jackson", "Taylor Swift", "Bad Bunny", "Shakira",
+            "Beyoncé",
+
+            # Conceptos generales
+            "dinero", "amor", "familia", "amigos", "vacaciones",
+            "escuela", "trabajo"
+        ]
+        
+        # Preguntas capciosas para la dinámica final
+        self.preguntas_capciosas = [
+            "¿Te gusta?",
+            "¿Te lo pondrías?",
+            "¿Lo llevarías a una fiesta?",
+            "¿Te parece bonito?",
+            "¿Lo usarías todos los días?",
+            "¿Lo compartirías en familia?",
+            "¿Lo recomendarías a un amigo?",
+            "¿Pagarías mucho dinero por conocerlo?",
+            "¿Lo tendrías en tu casa?",
+            "¿Te da confianza?",
+            "¿Lo considerarías elegante?",
+            "¿Combina con tu personalidad?",
+            "¿Lo extrañarías?",
+            "¿Lo presentarías a tus padres?",
+            "¿Te hace sentir importante?"
         ]
         
         self.palabra_secreta = None
@@ -34,6 +92,12 @@ class AsistenteImpostor:
         self.turno_actual = 0
         self.orden_turnos = []
         
+        # Variables para la dinámica final
+        self.preguntador = None
+        self.respondedor = None
+        self.pregunta_elegida = None
+        self.preguntas_mostradas = []
+        
         # Rate limiting
         self.ultimo_request_ia = 0
         self.min_intervalo = 2.0
@@ -43,29 +107,64 @@ class AsistenteImpostor:
     def inicializar_ia(self):
         """IA con personalidad ajustada: Formal, Amable y Neutra"""
         prompt_sistema = """
-Eres Jarvis, un asistente IA inteligente y muy amable encargado de moderar el juego "El Impostor".
+Eres Jarvis cómico, un asistente IA inteligente y muy amable encargado de moderar el juego "El Impostor".
 
 PERSONALIDAD:
-- Tono: Formal pero cálido, educado y servicial.
-- Estilo: Neutro y profesional. Evita el exceso de jerga.
-- Objetivo: Que el juego sea claro y organizado.
+- Tono: Amiguero pero cálido, algo medio formal, educado y servicial.
+- Estilo: Jovial pero evita el exceso de jerga y modismos.
+- Objetivo: Que el juego sea claro y organizado pero con momentos de ligereza cómica.
+- IMPORTANTE: Cada vez que un jugador dé una pista, haz un comentario sutil y ligeramente cómico sobre lo que dijo (máximo 1 frase corta).
 
 FLUJO DEL JUEGO:
-1. SALUDO: Al inicio, saluda cordialmente y explica brevemente las reglas.
+1. SALUDO: Al inicio, saluda cordialmente y explica las reglas.
 2. REGISTRO: Solo cuando digan "Comenzar", pide los nombres de los participantes.
-3. JUEGO: Un jugador es el impostor (no conoce la palabra secreta).
-4. VOTACIÓN: Al final, coordinas la votación para descubrir al impostor.
+3. REVELAR PALABRAS: Cuando sea el turno de cada jugador, SIEMPRE di: "Todos los demás, tápense los ojos o volteen la pantalla para que solo [NOMBRE] pueda ver su palabra".
+4. JUEGO: Durante las pistas, emite comentarios sutiles y cómicos sobre lo que dicen.
+5. VOTACIÓN: Coordinas la votación para descubrir al impostor.
+6. DINÁMICA FINAL: Escoges participantes aleatorios para hacer preguntas capciosas.
 
 REGLAS DE INTERACCIÓN:
-- Sé conciso (máximo 2 frases por turno).
+- Sé conciso (máximo 2 frases por turno, salvo en la dinámica final).
 - NO uses emojis.
+- NO uses **** ni símbolos innecesarios.
+- SOLO responde en texto plano (No negritas, ni bulletpoints). 
+- Usa humor sutil sin ofender.
 """
         
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-exp",
+            model_name="gemini-2.5-flash",
             system_instruction=prompt_sistema
         )
         self.chat = self.model.start_chat(history=[])
+    
+    def generar_comentario_pista(self, jugador, pista):
+        """Genera un comentario cómico sobre la pista usando IA"""
+        try:
+            prompt = f"""El jugador {jugador} acaba de dar esta pista sobre la palabra secreta: "{pista}"
+
+Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico sobre lo que dijo. El comentario debe ser amigable y no revelar nada sobre la palabra. Solo responde con el comentario, sin explicaciones adicionales."""
+            
+            self._esperar_rate_limit()
+            response = self.chat.send_message(prompt)
+            comentario = response.text.strip()
+            
+            # Limitar longitud por seguridad
+            if len(comentario.split()) > 20:
+                comentario = ' '.join(comentario.split()[:20]) + "..."
+            
+            return comentario
+        except Exception as e:
+            print(f"[ERROR COMENTARIO IA] {e}")
+            # Fallback: comentarios genéricos
+            comentarios_fallback = [
+                "Interesante perspectiva.",
+                "Hmm, muy revelador.",
+                "Esa pista dice mucho... o tal vez nada.",
+                "Curioso enfoque.",
+                "Veo que piensas diferente.",
+                "Eso nos da mucho en qué pensar."
+            ]
+            return random.choice(comentarios_fallback)
     
     def detectar_genero(self, nombre):
         """Detección simple de género sin IA"""
@@ -148,6 +247,8 @@ REGLAS DE INTERACCIÓN:
             for jugador in self.jugadores:
                 if jugador.lower() in texto_lower:
                     return f"[VOTAR:{jugador}] Voto registrado."
+        elif self.fase == "pregunta_final":
+            return "[RESPUESTA_PREGUNTA] Interesante respuesta. Veamos los resultados finales."
         
         return "Continúa."
     
@@ -171,7 +272,8 @@ REGLAS DE INTERACCIÓN:
             if any(palabra in texto_lower for palabra in ["último", "ultima", "listo", "ya estamos", "ya somos", "todos"]):
                 if len(self.jugadores) >= 3:
                     self._iniciar_juego()
-                    return f"[INICIAR_JUEGO] Perfecto, {len(self.jugadores)} jugadores registrados. Ahora cada uno verá su palabra. {self.jugadores[0]}, presiona 'Ver mi palabra'."
+                    siguiente = self.jugadores[0]
+                    return f"[INICIAR_JUEGO] Perfecto, {len(self.jugadores)} jugadores registrados. Ahora cada uno verá su palabra. Todos los demás, tápense los ojos o volteen la pantalla. {siguiente}, presiona 'Ver mi palabra' y cuando ya no salga en pantalla presiona el botón de Listo."
                 else:
                     return f"Necesitamos al menos 3 jugadores. Tenemos {len(self.jugadores)}."
             
@@ -194,7 +296,8 @@ REGLAS DE INTERACCIÓN:
                     
                     if len(self.jugadores) >= 5:
                          self._iniciar_juego()
-                         return f"[REGISTRAR:{nombre}] [INICIAR_JUEGO] Tenemos 5 jugadores. Iniciando juego. {self.jugadores[0]}, presiona 'Ver mi palabra'."
+                         siguiente = self.jugadores[0]
+                         return f"[REGISTRAR:{nombre}] [INICIAR_JUEGO] Tenemos 5 jugadores. Iniciando juego. Todos los demás, tápense los ojos o volteen la pantalla. {siguiente}, presiona 'Ver mi palabra' y cuando ya no salga en pantalla presiona el botón de Listo."
                     
                     return f"[REGISTRAR:{nombre}] Perfecto, {nombre} registrado. ¿Quién más va a jugar?"
                 else:
@@ -229,7 +332,7 @@ REGLAS DE INTERACCIÓN:
                     
                     # Hay más jugadores
                     siguiente = self.jugadores[self.turno_actual]
-                    return f"[JUGADOR_LISTO] Perfecto. {siguiente}, ahora es tu turno. Presiona 'Ver mi palabra'."
+                    return f"[JUGADOR_LISTO] Perfecto. Ahora todos los demás tápense los ojos o volteen la pantalla. {siguiente}, presiona 'Ver mi palabra' y cuando ya no salga en pantalla presiona el botón de Listo."
                 
             return None
         
@@ -238,18 +341,23 @@ REGLAS DE INTERACCIÓN:
             if len(texto.strip()) > 2:
                 if self.turno_actual < len(self.orden_turnos):
                     idx = self.orden_turnos[self.turno_actual]
-                    self.pistas_ronda.append(f"{self.jugadores[idx]}: {texto}")
+                    jugador = self.jugadores[idx]
+                    self.pistas_ronda.append(f"{jugador}: {texto}")
+                    
+                    # Generar comentario cómico
+                    comentario = self.generar_comentario_pista(jugador, texto)
+                    
                     self.turno_actual += 1
                     
                     print(f"[FALLBACK] Pista guardada. Turno: {self.turno_actual}/{len(self.jugadores)}")
                     
                     if self.turno_actual >= len(self.jugadores):
                         self.fase = "decision_ronda"
-                        return "[GUARDAR_PISTA] Interesante. Todos han dado sus pistas. ¿Desean otra ronda o votar?"
+                        return f"[GUARDAR_PISTA] {comentario} Todos han dado sus pistas. ¿Desean jugar otra ronda o ya votar?"
                     
                     siguiente_idx = self.orden_turnos[self.turno_actual]
                     siguiente = self.jugadores[siguiente_idx]
-                    return f"[GUARDAR_PISTA] Bien. {siguiente}, tu turno para dar una pista."
+                    return f"[GUARDAR_PISTA] {comentario} {siguiente}, tu turno para dar una pista."
             return None
         
         # === DECISIÓN RONDA ===
@@ -300,21 +408,8 @@ REGLAS DE INTERACCIÓN:
                     print(f"[FALLBACK] Votos actuales: {len(self.votos_impostor)}/{len(self.jugadores)}")
                     
                     if len(self.votos_impostor) >= len(self.jugadores):
-                        print("[FALLBACK] ¡VOTACIÓN COMPLETA! Determinando ganador...")
-                        self._determinar_ganador()
-                        impostor_real = self.jugadores[self.impostor_index]
-                        
-                        # Contar votos
-                        conteo = {}
-                        for votado in self.votos_impostor.values():
-                            conteo[votado] = conteo.get(votado, 0) + 1
-                        mas_votado = max(conteo, key=conteo.get)
-                        votos_mas_votado = conteo[mas_votado]
-                        
-                        if mas_votado == impostor_real:
-                            return f"[VOTAR:{nombre_encontrado}] Votación completa. ¡{mas_votado} recibió {votos_mas_votado} votos! El impostor era {impostor_real}. ¡GANAN LOS CIUDADANOS!"
-                        else:
-                            return f"[VOTAR:{nombre_encontrado}] Votación completa. {mas_votado} recibió {votos_mas_votado} votos, pero el impostor era {impostor_real}. ¡GANA EL IMPOSTOR!"
+                        print("[FALLBACK] ¡VOTACIÓN COMPLETA! Iniciando dinámica final...")
+                        return self._iniciar_dinamica_final()
                     
                     siguiente_idx = len(self.votos_impostor)
                     siguiente_votante = self.jugadores[siguiente_idx]
@@ -323,7 +418,49 @@ REGLAS DE INTERACCIÓN:
             print(f"[FALLBACK] No se detectó nombre válido en: '{texto_lower}'")
             return "No detecté un nombre válido. Por favor, di el nombre del jugador que crees que es el impostor."
         
+        # === PREGUNTA FINAL ===
+        if self.fase == "pregunta_final":
+            # Cualquier respuesta avanza al resultado
+            confirmaciones = ["ok", "ya", "listo", "entendido", "bien", "siguiente"]
+            if any(palabra in texto_lower for palabra in confirmaciones) or len(texto.strip()) > 3:
+                self._determinar_ganador()
+                impostor_real = self.jugadores[self.impostor_index]
+                
+                # Contar votos
+                conteo = {}
+                for votado in self.votos_impostor.values():
+                    conteo[votado] = conteo.get(votado, 0) + 1
+                mas_votado = max(conteo, key=conteo.get)
+                votos_mas_votado = conteo[mas_votado]
+                
+                if mas_votado == impostor_real:
+                    return f"[RESPUESTA_PREGUNTA] Interesante. Ahora sí, los resultados: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar eso es todo."
+                else:
+                    return f"[RESPUESTA_PREGUNTA] Bien dicho. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, Gracias por jugar, eso es todo."
+            return None
+        
         return None
+    
+    def _iniciar_dinamica_final(self):
+        """Inicia la dinámica de pregunta capciosa"""
+        self.fase = "pregunta_final"
+        
+        # Seleccionar preguntador y respondedor aleatorios (diferentes)
+        self.preguntador = random.choice(self.jugadores)
+        posibles_respondedores = [j for j in self.jugadores if j != self.preguntador]
+        self.respondedor = random.choice(posibles_respondedores)
+        
+        # Seleccionar 3 preguntas aleatorias
+        self.preguntas_mostradas = random.sample(self.preguntas_capciosas, min(3, len(self.preguntas_capciosas)))
+        
+        # Formatear preguntas para mostrar
+        preguntas_texto = "\n".join([f"{i+1}. {p}" for i, p in enumerate(self.preguntas_mostradas)])
+        
+        mensaje = f"[DINAMICA_FINAL] Momento especial antes de revelar resultados. {self.preguntador}, vas a hacerle una pregunta a {self.respondedor}. Aquí tienes 3 opciones, elige una:\n\n{preguntas_texto}\n\n{self.preguntador} y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya terminado de responder dime por el micrófono un resumen de lo que te dijo."
+        
+        print(f"[DINAMICA] Preguntador: {self.preguntador}, Respondedor: {self.respondedor}")
+        
+        return mensaje
     
     def _construir_contexto(self):
         """Contexto del juego actualizado"""
@@ -410,7 +547,10 @@ REGLAS DE INTERACCIÓN:
             "es_impostor": False,
             "palabra": None,
             "listos": len(self.jugadores_listos),
-            "total_jugadores": len(self.jugadores)
+            "total_jugadores": len(self.jugadores),
+            "preguntador": self.preguntador,
+            "respondedor": self.respondedor,
+            "preguntas": self.preguntas_mostradas
         }
         
         if self.fase == "mostrando_palabras" and self.turno_actual < len(self.jugadores):
