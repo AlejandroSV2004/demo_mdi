@@ -93,10 +93,8 @@ class AsistenteImpostor:
         self.orden_turnos = []
         
         # Variables para la dinámica final
-        self.preguntador = None
-        self.respondedor = None
-        self.pregunta_elegida = None
-        self.preguntas_mostradas = []
+        self.parejas_preguntas = []  # Lista de tuplas (preguntador, respondedor, preguntas)
+        self.indice_pareja_actual = 0
         
         # Rate limiting
         self.ultimo_request_ia = 0
@@ -116,7 +114,7 @@ PERSONALIDAD:
 - IMPORTANTE: Cada vez que un jugador dé una pista, haz un comentario sutil y ligeramente cómico sobre lo que dijo (máximo 1 frase corta).
 
 FLUJO DEL JUEGO:
-1. SALUDO: Al inicio, saluda cordialmente y explica las reglas.
+1. SALUDO: Al inicio, saluda cordialmente y explica las reglas, NO OLVIDAR DECIRLES QUE PARA INICAR EL JUEGO DEBEN DECIR EXPLICITAMENTE LA PALABRA "COMENZAR".
 2. REGISTRO: Solo cuando digan "Comenzar", pide los nombres de los participantes.
 3. REVELAR PALABRAS: Cuando sea el turno de cada jugador, SIEMPRE di: "Todos los demás, tápense los ojos o volteen la pantalla para que solo [NOMBRE] pueda ver su palabra".
 4. JUEGO: Durante las pistas, emite comentarios sutiles y cómicos sobre lo que dicen.
@@ -248,7 +246,7 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
                 if jugador.lower() in texto_lower:
                     return f"[VOTAR:{jugador}] Voto registrado."
         elif self.fase == "pregunta_final":
-            return "[RESPUESTA_PREGUNTA] Interesante respuesta. Veamos los resultados finales."
+            return "[RESPUESTA_PREGUNTA] Interesante respuesta. Continuemos."
         
         return "Continúa."
     
@@ -420,35 +418,90 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
         
         # === PREGUNTA FINAL ===
         if self.fase == "pregunta_final":
-            # Cualquier respuesta avanza al resultado
+            # Cualquier respuesta avanza
             confirmaciones = ["ok", "ya", "listo", "entendido", "bien", "siguiente"]
             if any(palabra in texto_lower for palabra in confirmaciones) or len(texto.strip()) > 3:
-                self._determinar_ganador()
-                impostor_real = self.jugadores[self.impostor_index]
                 
-                # Contar votos
-                conteo = {}
-                for votado in self.votos_impostor.values():
-                    conteo[votado] = conteo.get(votado, 0) + 1
-                mas_votado = max(conteo, key=conteo.get)
-                votos_mas_votado = conteo[mas_votado]
-                
-                if mas_votado == impostor_real:
-                    return f"[RESPUESTA_PREGUNTA] Interesante. Ahora sí, los resultados: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar eso es todo."
+                # Verificar si hay más rondas de preguntas
+                if self.ronda_pregunta_actual < self.total_rondas_preguntas:
+                    # Continuar con siguiente ronda de pregunta
+                    return self._siguiente_ronda_pregunta()
                 else:
-                    return f"[RESPUESTA_PREGUNTA] Bien dicho. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, Gracias por jugar, eso es todo."
+                    # Ya terminaron todas las preguntas, mostrar resultados
+                    self._determinar_ganador()
+                    impostor_real = self.jugadores[self.impostor_index]
+                    
+                    # Contar votos
+                    conteo = {}
+                    for votado in self.votos_impostor.values():
+                        conteo[votado] = conteo.get(votado, 0) + 1
+                    mas_votado = max(conteo, key=conteo.get)
+                    votos_mas_votado = conteo[mas_votado]
+                    
+                    if mas_votado == impostor_real:
+                        return f"[RESPUESTA_PREGUNTA] Interesante. Ahora sí, los resultados: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar eso es todo."
+                    else:
+                        return f"[RESPUESTA_PREGUNTA] Bien dicho. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, Gracias por jugar, eso es todo."
             return None
         
         return None
     
     def _iniciar_dinamica_final(self):
-        """Inicia la dinámica de pregunta capciosa"""
+        """Inicia la dinámica de pregunta capciosa con múltiples rondas"""
         self.fase = "pregunta_final"
         
-        # Seleccionar preguntador y respondedor aleatorios (diferentes)
-        self.preguntador = random.choice(self.jugadores)
-        posibles_respondedores = [j for j in self.jugadores if j != self.preguntador]
-        self.respondedor = random.choice(posibles_respondedores)
+        # Calcular cuántas rondas necesitamos para que todos participen
+        # Con N jugadores, necesitamos al menos N/2 rondas (redondeado hacia arriba)
+        # para asegurar que todos interactúen
+        num_jugadores = len(self.jugadores)
+        self.total_rondas_preguntas = (num_jugadores + 1) // 2  # División entera hacia arriba
+        self.ronda_pregunta_actual = 1
+        self.participantes_interactuados = set()
+        
+        print(f"[DINAMICA] Iniciando {self.total_rondas_preguntas} rondas de preguntas para {num_jugadores} jugadores")
+        
+        # Iniciar primera ronda
+        return self._crear_ronda_pregunta()
+    
+    def _siguiente_ronda_pregunta(self):
+        """Avanza a la siguiente ronda de pregunta"""
+        self.ronda_pregunta_actual += 1
+        print(f"[DINAMICA] Avanzando a ronda {self.ronda_pregunta_actual}/{self.total_rondas_preguntas}")
+        return self._crear_ronda_pregunta()
+    
+    def _crear_ronda_pregunta(self):
+        """Crea una nueva ronda de pregunta, priorizando a quienes no han participado"""
+        
+        # Obtener jugadores que NO han participado aún
+        no_participados = [j for j in self.jugadores if j not in self.participantes_interactuados]
+        
+        # Si quedan jugadores sin participar, priorizarlos
+        if len(no_participados) >= 2:
+            # Ambos deben ser de los que no han participado
+            self.preguntador = random.choice(no_participados)
+            no_participados_sin_preguntador = [j for j in no_participados if j != self.preguntador]
+            self.respondedor = random.choice(no_participados_sin_preguntador)
+        elif len(no_participados) == 1:
+            # Solo queda uno sin participar, asegurar que participe
+            if random.random() < 0.5:
+                # El que no ha participado pregunta
+                self.preguntador = no_participados[0]
+                participados = [j for j in self.jugadores if j != self.preguntador]
+                self.respondedor = random.choice(participados)
+            else:
+                # Al que no ha participado le preguntan
+                self.respondedor = no_participados[0]
+                participados = [j for j in self.jugadores if j != self.respondedor]
+                self.preguntador = random.choice(participados)
+        else:
+            # Todos ya participaron al menos una vez, elegir aleatorio
+            self.preguntador = random.choice(self.jugadores)
+            posibles_respondedores = [j for j in self.jugadores if j != self.preguntador]
+            self.respondedor = random.choice(posibles_respondedores)
+        
+        # Marcar como participados
+        self.participantes_interactuados.add(self.preguntador)
+        self.participantes_interactuados.add(self.respondedor)
         
         # Seleccionar 3 preguntas aleatorias
         self.preguntas_mostradas = random.sample(self.preguntas_capciosas, min(3, len(self.preguntas_capciosas)))
@@ -456,9 +509,12 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
         # Formatear preguntas para mostrar
         preguntas_texto = "\n".join([f"{i+1}. {p}" for i, p in enumerate(self.preguntas_mostradas)])
         
-        mensaje = f"[DINAMICA_FINAL] Momento especial antes de revelar resultados. {self.preguntador}, vas a hacerle una pregunta a {self.respondedor}. Aquí tienes 3 opciones, elige una:\n\n{preguntas_texto}\n\n{self.preguntador} y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya terminado de responder dime por el micrófono un resumen de lo que te dijo."
+        ronda_texto = f"Ronda {self.ronda_pregunta_actual} de {self.total_rondas_preguntas}. " if self.total_rondas_preguntas > 1 else ""
         
-        print(f"[DINAMICA] Preguntador: {self.preguntador}, Respondedor: {self.respondedor}")
+        mensaje = f"[DINAMICA_FINAL] {ronda_texto}{self.preguntador}, vas a hacerle una pregunta a {self.respondedor}. Aquí tienes 3 opciones, elige una:\n\n{preguntas_texto}\n\n y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya terminado de responder dime por el micrófono un resumen de lo que te dijo."
+        
+        print(f"[DINAMICA] Ronda {self.ronda_pregunta_actual}: {self.preguntador} -> {self.respondedor}")
+        print(f"[DINAMICA] Participantes hasta ahora: {self.participantes_interactuados}")
         
         return mensaje
     
@@ -503,7 +559,11 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             
         self.fase = "mostrando_palabras"
         self.palabra_secreta = random.choice(self.palabras_ecuador)
-        self.impostor_index = random.randint(0, len(self.jugadores) - 1)
+
+        indices_disponibles = list(range(len(self.jugadores)))
+        random.shuffle(indices_disponibles)
+        self.impostor_index = indices_disponibles[0]  # Mezclar bien los índices
+
         self.jugadores_listos = set()
         self.turno_actual = 0
         
@@ -550,7 +610,9 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             "total_jugadores": len(self.jugadores),
             "preguntador": self.preguntador,
             "respondedor": self.respondedor,
-            "preguntas": self.preguntas_mostradas
+            "preguntas": self.preguntas_mostradas,
+            "ronda_pregunta": self.ronda_pregunta_actual,
+            "total_rondas": self.total_rondas_preguntas
         }
         
         if self.fase == "mostrando_palabras" and self.turno_actual < len(self.jugadores):

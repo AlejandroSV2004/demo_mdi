@@ -202,7 +202,7 @@ class InterfazImpostor:
         threading.Thread(target=self._saludo_thread, daemon=True).start()
 
     def _saludo_thread(self):
-        msg = "Hola! Soy Jarvis, seré el mediador de este juego. Presiona el botón rojo cuando haya terminado de hablar para poder conversar conmigo y que una persona diga literalmente sólo la palabra 'Hola' para comenzar el juego."
+        msg = "Hola! Soy Jarvis, seré el mediador de este juego. Presiona el botón rojo cuando haya terminado de hablar para poder conversar, si el boton rojo no cambia el enunciado a 'ESCUCHANDO...' entonces presiona el botón de nuevo. Ahora necesito que una persona diga literalmente sólo la palabra 'Hola' para comenzar la interacción."
         self.root.after(0, lambda: self.agregar_mensaje_app(msg))
         self.root.after(0, lambda: self.label_estado.config(text="Esperando voz..."))
         self.texto_a_voz(msg)
@@ -409,10 +409,15 @@ class InterfazImpostor:
             preguntador = info.get("preguntador")
             respondedor = info.get("respondedor")
             preguntas = info.get("preguntas", [])
+            pareja_actual = info.get("pareja_actual", 0)
+            total_parejas = info.get("total_parejas", 0)
             
             if preguntador and respondedor and preguntas:
                 self.mostrar_preguntas(preguntas, preguntador, respondedor)
-                self.label_estado.config(text=f"{preguntador}, elige y pregunta a {respondedor}")
+                if total_parejas > 1:
+                    self.label_estado.config(text=f"Dinámica Final - Interacción {pareja_actual}/{total_parejas} - {preguntador} pregunta a {respondedor}")
+                else:
+                    self.label_estado.config(text=f"{preguntador}, elige y pregunta a {respondedor}")
             else:
                 self.label_estado.config(text="Preparando dinámica final...")
             
