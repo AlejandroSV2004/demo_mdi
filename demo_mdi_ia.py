@@ -92,7 +92,9 @@ class AsistenteImpostor:
         self.turno_actual = 0
         self.orden_turnos = []
         
-        # Variables para la dinámica final
+        # Variables para la dinámica final - MEJORADO
+        self.parejas_dinamica = []  # Lista de tuplas (preguntador, respondedor)
+        self.pareja_actual_index = 0
         self.preguntador = None
         self.respondedor = None
         self.pregunta_elegida = None
@@ -121,7 +123,7 @@ FLUJO DEL JUEGO:
 3. REVELAR PALABRAS: Cuando sea el turno de cada jugador, SIEMPRE di: "Todos los demás, tápense los ojos o volteen la pantalla para que solo [NOMBRE] pueda ver su palabra".
 4. JUEGO: Durante las pistas, emite comentarios sutiles y cómicos sobre lo que dicen.
 5. VOTACIÓN: Coordinas la votación para descubrir al impostor.
-6. DINÁMICA FINAL: Escoges participantes aleatorios para hacer preguntas capciosas.
+6. DINÁMICA FINAL: Escoges MÚLTIPLES PAREJAS de participantes para que todos interactúen con preguntas capciosas. Cada pareja tiene su turno.
 
 REGLAS DE INTERACCIÓN:
 - Sé conciso (máximo 2 frases por turno, salvo en la dinámica final).
@@ -189,6 +191,32 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             time.sleep(self.min_intervalo - tiempo_transcurrido)
         self.ultimo_request_ia = time.time()
     
+    def _crear_parejas_dinamica(self):
+        """Crea parejas para que todos participen al menos una vez"""
+        jugadores_copia = self.jugadores.copy()
+        random.shuffle(jugadores_copia)
+        
+        parejas = []
+        n = len(jugadores_copia)
+        
+        if n % 2 == 0:
+            # Número par: crear n/2 parejas sin repetir
+            for i in range(0, n, 2):
+                parejas.append((jugadores_copia[i], jugadores_copia[i + 1]))
+        else:
+            # Número impar: crear (n-1)/2 parejas, el último participa dos veces
+            for i in range(0, n - 1, 2):
+                parejas.append((jugadores_copia[i], jugadores_copia[i + 1]))
+            # El último jugador participa en una pareja adicional
+            parejas.append((jugadores_copia[-1], jugadores_copia[0]))
+        
+        print(f"\n[PAREJAS CREADAS] Total: {len(parejas)}")
+        for i, (p1, p2) in enumerate(parejas, 1):
+            print(f"  Pareja {i}: {p1} pregunta a {p2}")
+        print()
+        
+        return parejas
+    
     def procesar_entrada(self, texto_usuario):
         """IA interpreta y decide"""
         print(f"\n{'='*60}")
@@ -248,7 +276,7 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
                 if jugador.lower() in texto_lower:
                     return f"[VOTAR:{jugador}] Voto registrado."
         elif self.fase == "pregunta_final":
-            return "[RESPUESTA_PREGUNTA] Interesante respuesta. Veamos los resultados finales."
+            return "[RESPUESTA_PREGUNTA] Interesante respuesta. Siguiente pareja."
         
         return "Continúa."
     
@@ -305,7 +333,7 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             
             return None
         
-        # === MOSTRANDO PALABRAS === ¡CRÍTICO!
+        # === MOSTRANDO PALABRAS ===
         if self.fase == "mostrando_palabras":
             # Detectar CUALQUIER confirmación
             confirmaciones = ["listo", "ok", "ya", "entendido", "siguiente", "vi", "ví", "bien", "dale", "continuar"]
@@ -418,49 +446,77 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             print(f"[FALLBACK] No se detectó nombre válido en: '{texto_lower}'")
             return "No detecté un nombre válido. Por favor, di el nombre del jugador que crees que es el impostor."
         
-        # === PREGUNTA FINAL ===
+        # === PREGUNTA FINAL - MODIFICADO PARA MÚLTIPLES PAREJAS ===
         if self.fase == "pregunta_final":
-            # Cualquier respuesta avanza al resultado
+            # Cualquier respuesta avanza a la siguiente pareja o al resultado
             confirmaciones = ["ok", "ya", "listo", "entendido", "bien", "siguiente"]
             if any(palabra in texto_lower for palabra in confirmaciones) or len(texto.strip()) > 3:
-                self._determinar_ganador()
-                impostor_real = self.jugadores[self.impostor_index]
+                self.pareja_actual_index += 1
                 
-                # Contar votos
-                conteo = {}
-                for votado in self.votos_impostor.values():
-                    conteo[votado] = conteo.get(votado, 0) + 1
-                mas_votado = max(conteo, key=conteo.get)
-                votos_mas_votado = conteo[mas_votado]
-                
-                if mas_votado == impostor_real:
-                    return f"[RESPUESTA_PREGUNTA] Interesante. Ahora sí, los resultados: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar eso es todo."
+                # Verificar si hay más parejas
+                if self.pareja_actual_index < len(self.parejas_dinamica):
+                    return self._mostrar_siguiente_pareja()
                 else:
-                    return f"[RESPUESTA_PREGUNTA] Bien dicho. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, Gracias por jugar, eso es todo."
+                    # Todas las parejas completadas, mostrar resultado final
+                    return self._mostrar_resultado_final()
             return None
         
         return None
     
     def _iniciar_dinamica_final(self):
-        """Inicia la dinámica de pregunta capciosa"""
+        """Inicia la dinámica de pregunta capciosa con múltiples parejas"""
         self.fase = "pregunta_final"
         
-        # Seleccionar preguntador y respondedor aleatorios (diferentes)
-        self.preguntador = random.choice(self.jugadores)
-        posibles_respondedores = [j for j in self.jugadores if j != self.preguntador]
-        self.respondedor = random.choice(posibles_respondedores)
+        # Crear parejas para que todos participen
+        self.parejas_dinamica = self._crear_parejas_dinamica()
+        self.pareja_actual_index = 0
+        
+        # Mostrar primera pareja
+        return self._mostrar_siguiente_pareja()
+    
+    def _mostrar_siguiente_pareja(self):
+        """Muestra la siguiente pareja de pregunta-respuesta"""
+        if self.pareja_actual_index >= len(self.parejas_dinamica):
+            return self._mostrar_resultado_final()
+        
+        # Obtener pareja actual
+        self.preguntador, self.respondedor = self.parejas_dinamica[self.pareja_actual_index]
         
         # Seleccionar 3 preguntas aleatorias
-        self.preguntas_mostradas = random.sample(self.preguntas_capciosas, min(3, len(self.preguntas_capciosas)))
+        self.preguntas_mostradas = random.sample(
+            self.preguntas_capciosas, 
+            min(3, len(self.preguntas_capciosas))
+        )
         
         # Formatear preguntas para mostrar
         preguntas_texto = "\n".join([f"{i+1}. {p}" for i, p in enumerate(self.preguntas_mostradas)])
         
-        mensaje = f"[DINAMICA_FINAL] Momento especial antes de revelar resultados. {self.preguntador}, vas a hacerle una pregunta a {self.respondedor}. Aquí tienes 3 opciones, elige una:\n\n{preguntas_texto}\n\n y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya terminado de responder dime por el micrófono un resumen de lo que te dijo."
+        pareja_num = self.pareja_actual_index + 1
+        total_parejas = len(self.parejas_dinamica)
         
-        print(f"[DINAMICA] Preguntador: {self.preguntador}, Respondedor: {self.respondedor}")
+        mensaje = f"[DINAMICA_FINAL] Perfecto, ahora {self.preguntador} vas a hacerle una pregunta a {self.respondedor}. Escoge una pregunta de las siguientes opciones:\n\n{preguntas_texto}\n\n y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya respondido, dime por el micrófono un resumen de lo que dijo."
+        
+        print(f"[DINAMICA] Pareja {pareja_num}/{total_parejas}: {self.preguntador} -> {self.respondedor}")
         
         return mensaje
+    
+    def _mostrar_resultado_final(self):
+        """Muestra el resultado final después de todas las interacciones"""
+        impostor_real = self.jugadores[self.impostor_index]
+        
+        # Contar votos
+        conteo = {}
+        for votado in self.votos_impostor.values():
+            conteo[votado] = conteo.get(votado, 0) + 1
+        mas_votado = max(conteo, key=conteo.get)
+        votos_mas_votado = conteo[mas_votado]
+        
+        self._determinar_ganador()
+        
+        if mas_votado == impostor_real:
+            return f"[RESPUESTA_PREGUNTA] Excelente. Ahora sí, los resultados finales: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar, eso es todo."
+        else:
+            return f"[RESPUESTA_PREGUNTA] Muy bien. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, gracias por jugar, eso es todo."
     
     def _construir_contexto(self):
         """Contexto del juego actualizado"""
@@ -554,7 +610,9 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
             "total_jugadores": len(self.jugadores),
             "preguntador": self.preguntador,
             "respondedor": self.respondedor,
-            "preguntas": self.preguntas_mostradas
+            "preguntas": self.preguntas_mostradas,
+            "pareja_actual": self.pareja_actual_index + 1 if self.fase == "pregunta_final" else 0,
+            "total_parejas": len(self.parejas_dinamica) if self.fase == "pregunta_final" else 0
         }
         
         if self.fase == "mostrando_palabras" and self.turno_actual < len(self.jugadores):

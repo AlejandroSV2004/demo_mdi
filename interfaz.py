@@ -78,9 +78,19 @@ class InterfazImpostor:
         self.font_palabra_gigante = tkfont.Font(family="Segoe UI", size=40, weight="bold")
         self.font_pregunta = tkfont.Font(family="Segoe UI", size=18, weight="bold")
         self.font_estado = tkfont.Font(family="Segoe UI", size=11, slant="italic")
+        self.font_contador_parejas = tkfont.Font(family="Segoe UI", size=16, weight="bold")
         
         # Espacio superior
         tk.Frame(self.root, bg="#FFFFFF", height=20).pack()
+        
+        # Label para contador de parejas (solo visible en dinámica final)
+        self.label_contador_parejas = tk.Label(
+            self.root,
+            text="",
+            font=self.font_contador_parejas,
+            fg="#0064FF",
+            bg="#FFFFFF"
+        )
         
         # Label central (imagen, palabra o preguntas)
         self.label_central = tk.Label(
@@ -316,44 +326,35 @@ class InterfazImpostor:
     def limpiar_comandos(self, texto):
         return re.sub(r'\[.*?\]', '', texto).strip()
     
-    def mostrar_preguntas(self, preguntas, preguntador, respondedor):
-        """Muestra las preguntas en pantalla"""
+    def mostrar_preguntas(self, preguntas, preguntador, respondedor, pareja_actual, total_parejas):
+        """Muestra el contador de parejas, las preguntas se dicen por voz"""
         # Limpiar frame
         for widget in self.frame_preguntas.winfo_children():
             widget.destroy()
         
-        # Título
-        titulo = tk.Label(
+        # Mostrar contador de parejas
+        self.label_contador_parejas.config(text=f"Interacción {pareja_actual} de {total_parejas}")
+        self.label_contador_parejas.pack(pady=5)
+        
+        # Solo mostrar un mensaje simple indicando que deben escuchar
+        mensaje_escuchar = tk.Label(
             self.frame_preguntas,
-            text=f"{preguntador}, elige una pregunta para {respondedor}:",
-            font=tkfont.Font(family="Segoe UI", size=16, weight="bold"),
+            text=f"{preguntador} a {respondedor}",
+            font=tkfont.Font(family="Segoe UI", size=20, weight="bold"),
             fg="#0064FF",
-            bg="#FFFFFF"
+            bg="#FFFFFF",
+            pady=30
         )
-        titulo.pack(pady=10)
+        mensaje_escuchar.pack(pady=20)
         
-        # Preguntas
-        for i, pregunta in enumerate(preguntas, 1):
-            label_pregunta = tk.Label(
-                self.frame_preguntas,
-                text=f"{i}. {pregunta}",
-                font=self.font_pregunta,
-                fg="#333333",
-                bg="#F8F9FA",
-                padx=20,
-                pady=15,
-                relief="solid",
-                bd=1
-            )
-            label_pregunta.pack(pady=5, fill="x", padx=40)
-        
-        # Instrucción
+        # Instrucción simple
         instruccion = tk.Label(
             self.frame_preguntas,
-            text=f"Escoge la pregunta y luego pregúntasela a {respondedor}. Di un resumen de lo que responda.",
-            font=tkfont.Font(family="Segoe UI", size=12, slant="italic"),
+            text=f"{preguntador}, escoge una opción para preguntarle a {respondedor}.\nLuego resume su respuesta por el micrófono.",
+            font=tkfont.Font(family="Segoe UI", size=13, slant="italic"),
             fg="#666666",
-            bg="#FFFFFF"
+            bg="#FFFFFF",
+            wraplength=600
         )
         instruccion.pack(pady=10)
         
@@ -368,6 +369,7 @@ class InterfazImpostor:
         # Reset
         self.frame_palabra.pack_forget()
         self.frame_preguntas.pack_forget()
+        self.label_contador_parejas.pack_forget()
         self.btn_listo.config(state="disabled", cursor="arrow")
         self.btn_ver_palabra.config(state="normal")
         
@@ -406,7 +408,7 @@ class InterfazImpostor:
                 self.label_estado.config(text="VOTACIÓN - Di el nombre del impostor")
         
         elif fase == "pregunta_final":
-            # Mostrar preguntas en pantalla
+            # Mostrar preguntas en pantalla con contador
             preguntador = info.get("preguntador")
             respondedor = info.get("respondedor")
             preguntas = info.get("preguntas", [])
@@ -414,11 +416,8 @@ class InterfazImpostor:
             total_parejas = info.get("total_parejas", 0)
             
             if preguntador and respondedor and preguntas:
-                self.mostrar_preguntas(preguntas, preguntador, respondedor)
-                if total_parejas > 1:
-                    self.label_estado.config(text=f"Dinámica Final - Interacción {pareja_actual}/{total_parejas} - {preguntador} pregunta a {respondedor}")
-                else:
-                    self.label_estado.config(text=f"{preguntador}, elige y pregunta a {respondedor}")
+                self.mostrar_preguntas(preguntas, preguntador, respondedor, pareja_actual, total_parejas)
+                self.label_estado.config(text=f"Dinámica Final - {preguntador} pregunta a {respondedor}")
             else:
                 self.label_estado.config(text="Preparando dinámica final...")
             
