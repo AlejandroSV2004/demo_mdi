@@ -91,6 +91,13 @@ class AsistenteImpostor:
         self.historial_completo = []
         self.turno_actual = 0
         self.orden_turnos = []
+        # INICIALIZAR TODo
+        self.preguntador = None
+        self.respondedor = None
+        self.preguntas_mostradas = []
+        self.ronda_pregunta_actual = 0
+        self.total_rondas_preguntas = 0
+        self.participantes_interactuados = set()
         
         # Variables para la dinámica final
         self.parejas_preguntas = []  # Lista de tuplas (preguntador, respondedor, preguntas)
