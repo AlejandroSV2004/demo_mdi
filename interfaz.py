@@ -40,6 +40,7 @@ class InterfazImpostor:
                 print("ERROR: No se encuentra la carpeta 'model'.")
             self.vosk_model = Model("model")
             self.rec_vosk = KaldiRecognizer(self.vosk_model, self.fs)
+            print("VOSK cargado.")
         except Exception as e:
             print(f"Error VOSK: {e}")
         
