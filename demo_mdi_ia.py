@@ -360,7 +360,7 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
                     
                     # Hay más jugadores
                     siguiente = self.jugadores[self.turno_actual]
-                    return f"[JUGADOR_LISTO] Perfecto. Ahora todos los demás tápense los ojos o volteen la pantalla. {siguiente}, presiona 'Ver mi palabra' y cuando ya no salga en pantalla presiona el botón de Listo."
+                    return f"[JUGADOR_LISTO] Perfecto. Ahora todos los demás vean a otro lado. {siguiente}, presiona 'Ver mi palabra' y luego el botón de Listo."
                 
             return None
         
@@ -494,7 +494,7 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
         pareja_num = self.pareja_actual_index + 1
         total_parejas = len(self.parejas_dinamica)
         
-        mensaje = f"[DINAMICA_FINAL] Perfecto, ahora {self.preguntador} vas a hacerle una pregunta a {self.respondedor}. Escoge una pregunta de las siguientes opciones:\n\n{preguntas_texto}\n\n y luego pregúntasela directamente a {self.respondedor} en la vida real. Una vez que haya respondido, dime por el micrófono un resumen de lo que dijo."
+        mensaje = f"[DINAMICA_FINAL] Perfecto, ahora {self.preguntador} vas a hacerle una pregunta a {self.respondedor}. Escoge una pregunta de las siguientes opciones:\n\n{preguntas_texto}\n\n y luego pregúntasela directamente a {self.respondedor}l. Una vez que haya respondido, dime por el micrófono un resumen de lo que dijo."
         
         print(f"[DINAMICA] Pareja {pareja_num}/{total_parejas}: {self.preguntador} -> {self.respondedor}")
         
@@ -512,11 +512,17 @@ Genera UN comentario corto (máximo 15 palabras), sutil y ligeramente cómico so
         votos_mas_votado = conteo[mas_votado]
         
         self._determinar_ganador()
-        
+
         if mas_votado == impostor_real:
-            return f"[RESPUESTA_PREGUNTA] Excelente. Ahora sí, los resultados finales: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar, eso es todo."
+            return f"[RESPUESTA_PREGUNTA] Excelente. Los votos están sobre la mesa y el señalado es {mas_votado}, con un total de {votos_mas_votado} votos; sin embargo, la verdad emerge desde las sombras: el impostor real, quien sonrió todo el tiempo, era {impostor_real}. La palabra secreta era '{self.palabra_secreta}'. Resultado final: el grupo cae en la trampa, el impostor se sale con la suya y la victoria es reclamada sin ser vista venir. Excelente actuación {impostor_real}. Gracias por jugar, fin de la partida."
+
         else:
-            return f"[RESPUESTA_PREGUNTA] Muy bien. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, gracias por jugar, eso es todo."
+            return f"[RESPUESTA_PREGUNTA] Excelente. Los votos están sobre la mesa y el señalado es {mas_votado}, con un total de {votos_mas_votado} votos. Sin embargo, el impostor real, ese que sonrió todo el tiempo, era {impostor_real}. La palabra secreta era '{self.palabra_secreta}'. Resultado final: el grupo cae en la trampa, el impostor se sale con la suya y alguien acaba de ganar sin que nadie lo viera venir. Excelente actuación {impostor_real}, el público está en shock. Gracias por jugar, episodio terminado."
+       
+        # if mas_votado == impostor_real:
+        #     return f"[RESPUESTA_PREGUNTA] Excelente. Ahora sí, los resultados finales: ¡{mas_votado} recibió {votos_mas_votado} votos y SÍ era el impostor! La palabra era '{self.palabra_secreta}'. ¡GANAN LOS INOCENTES! Bien jugado chicos, gracias por jugar, eso es todo."
+        # else:
+        #     return f"[RESPUESTA_PREGUNTA] Muy bien. Resultados finales: {mas_votado} recibió {votos_mas_votado} votos, pero el impostor real era {impostor_real}. La palabra era '{self.palabra_secreta}'. ¡GANA EL IMPOSTOR! Bien jugado {impostor_real}, gracias por jugar, eso es todo."
     
     def _construir_contexto(self):
         """Contexto del juego actualizado"""
